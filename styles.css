@@ -168,4 +168,5 @@
   color: #88aacc;
   padding: 1px 0 5px 2px;
   letter-spacing: 0.01em;
+  white-space: pre-line;
 }

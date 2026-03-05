@@ -26,26 +26,31 @@ const EncarScoring = (() => {
       originPrice       = 0   // 신차가 (만원)
     } = data;
 
-    if (isInsurancePrivate) return 0; // 보험이력 비공개 → 0점
+    if (isInsurancePrivate) return 0;        // 보험이력 비공개 → 0점
+    if (data.hasUnavailablePeriod) return 0; // 정보제공 불가능기간 존재 → 0점
 
     const totalCostWon = myDamageAmount + otherDamageAmount;
-    if (totalCostWon === 0) return maxPoints; // 무사고
 
-    // originPrice(만원) → 원화 환산
-    if (originPrice > 0) {
+    let baseScore;
+    if (totalCostWon === 0) {
+      baseScore = maxPoints; // 보고된 사고 없음
+    } else if (originPrice > 0) {
+      // originPrice(만원) → 원화 환산
       const originWon  = originPrice * 10000;
       const costRatio  = totalCostWon / originWon;
 
-      if (costRatio <= 0.10) return maxPoints * 0.75; // 10% 이하: 경미
-      if (costRatio <= 0.20) return maxPoints * 0.45; // 10~20%: 중간
-      return maxPoints * 0.1;                          // 20% 초과: 심각
+      if (costRatio <= 0.10) baseScore = maxPoints * 0.75; // 10% 이하: 경미
+      else if (costRatio <= 0.20) baseScore = maxPoints * 0.45; // 10~20%: 중간
+      else baseScore = maxPoints * 0.1;                         // 20% 초과: 심각
+    } else {
+      // originPrice 없는 경우 절대 금액 기준 폴백
+      if (totalCostWon < 500000)   baseScore = maxPoints * 0.85;
+      else if (totalCostWon < 2000000) baseScore = maxPoints * 0.6;
+      else if (totalCostWon < 5000000) baseScore = maxPoints * 0.35;
+      else baseScore = maxPoints * 0.1;
     }
 
-    // originPrice 없는 경우 절대 금액 기준 폴백
-    if (totalCostWon < 500000)   return maxPoints * 0.85; // 50만원 미만
-    if (totalCostWon < 2000000)  return maxPoints * 0.6;
-    if (totalCostWon < 5000000)  return maxPoints * 0.35;
-    return maxPoints * 0.1;
+    return baseScore;
   }
 
   /**
@@ -130,6 +135,8 @@ const EncarScoring = (() => {
    *   - 미등록: 절반
    */
   function scoreInspection(data, maxPoints) {
+    if (data.isInspectionPrivate) return 0; // 성능점검 비공개 → 0점
+
     let score = maxPoints;
     const {
       hasInspection = false, hasReplacement = false, hasWelding = false, hasCorrosion = false,
@@ -191,7 +198,7 @@ const EncarScoring = (() => {
     );
 
     return {
-      total: Math.min(100, Math.max(0, totalScore)),
+      total: Math.min(100, totalScore),
       breakdown: scores,
       grade: getGrade(totalScore)
     };

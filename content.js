@@ -106,14 +106,21 @@
 
     // ── 툴팁 상세 정보 계산 ──
     const { originPrice = 0, price = 0, mileage = 0, year = 0,
-            insuranceCount = 0, isInsurancePrivate = false } = fullData;
+            insuranceCount = 0, isInsurancePrivate = false,
+            hasUnavailablePeriod = false, unavailablePeriods = [],
+            isInspectionPrivate = false } = fullData;
 
     // 사고/보험이력 건수 텍스트
-    const accidentText = isInsurancePrivate
-      ? '조회불가 · 비공개'
-      : insuranceCount === 0
-        ? '무사고'
-        : `보험처리 ${insuranceCount}건`;
+    const accidentLines = [];
+    if (isInsurancePrivate) {
+      accidentLines.push('조회불가 · 비공개');
+    } else {
+      accidentLines.push(insuranceCount === 0 ? '무사고' : `보험처리 ${insuranceCount}건`);
+    }
+    if (hasUnavailablePeriod) {
+      accidentLines.push(`⚠️ 정보제공 불가기간: ${unavailablePeriods.join(', ')}`);
+    }
+    const accidentText = accidentLines.join('\n');
 
     // 신차가 & 현재가 비율
     const priceDetail = (originPrice > 0 && price > 0)
@@ -154,6 +161,7 @@
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>
       </div>
+      ${isInspectionPrivate ? `<div class="encar-tooltip-detail">조회불가 · 비공개</div>` : ''}
       <div class="encar-tooltip-row">
         <span>📋 렌트이력</span>
         <span>${Math.round(scoreResult.breakdown.rental)}/${w.rental}</span>

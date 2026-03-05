@@ -59,6 +59,10 @@ const DetailParser = (() => {
       const yearMonth = vehicleData?.category?.yearMonth ?? '';
       const year = yearMonth.length >= 4 ? parseInt(yearMonth.slice(2, 4), 10) : 0;
 
+      // 성능점검 비공개 여부: formats 배열이 비어있으면 비공개
+      const isInspectionPrivate = (vehicleData?.condition?.inspection?.formats ?? []).length === 0;
+      console.log('[EncarScore] 성능점검 비공개:', isInspectionPrivate);
+
       return {
         originPrice,
         year,       // API 기반 연식 (DOM 파싱보다 신뢰도 높음)
@@ -66,7 +70,8 @@ const DetailParser = (() => {
         price: vehicleData?.advertisement?.price ?? 0, // API 기반 가격
         ...parseRecord(recordData, !recordViewable),
         ...parseInspection(inspectionData),
-        ...parseDiagnosis(diagnosisData)
+        ...parseDiagnosis(diagnosisData),
+        isInspectionPrivate
       };
 
     } catch (err) {
@@ -117,9 +122,16 @@ const DetailParser = (() => {
     const hasRentalHistory = useHistory.some(code => code === '3' || code === '4');
     const hasUsageChange = useHistory.length > 1;
 
-    console.log('[EncarScore] 보험이력:', isInsurancePrivate ? '비공개 (큰 감점)' : `${insuranceCount}건`, '/ 내차피해:', myDamageCount, '회 / 렌트이력:', hasRentalHistory, '/ 소유주변경:', ownerChangeCount, '회');
+    // 정보제공 불가능기간 (notJoinDate1~5 중 하나라도 있으면 true)
+    const unavailablePeriods = [
+      data.notJoinDate1, data.notJoinDate2, data.notJoinDate3,
+      data.notJoinDate4, data.notJoinDate5
+    ].filter(Boolean);
+    const hasUnavailablePeriod = unavailablePeriods.length > 0;
 
-    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, ownerChangeCount, hasRentalHistory, hasUsageChange };
+    console.log('[EncarScore] 보험이력:', isInsurancePrivate ? '비공개 (큰 감점)' : `${insuranceCount}건`, '/ 내차피해:', myDamageCount, '회 / 렌트이력:', hasRentalHistory, '/ 소유주변경:', ownerChangeCount, '회 / 정보제공불가기간:', unavailablePeriods);
+
+    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, hasRentalHistory, hasUsageChange };
   }
 
   /* ──────────────────────────────────────────────
