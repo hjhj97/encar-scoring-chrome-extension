@@ -115,7 +115,12 @@ const DetailParser = (() => {
     const otherDamageCount = data.otherAccidentCnt   ?? 0;
     const otherDamageAmount= data.otherAccidentCost  ?? 0;
     const isAccidentFree   = (myDamageCount + otherDamageCount) === 0;
-    const ownerChangeCount = data.ownerChangeCnt     ?? 0;  // 소유주 변경 횟수
+    const ownerChangeCount = data.ownerChangeCnt     ?? 0;
+
+    // 개별 보험처리 건당 지급액 (insuranceBenefit)
+    const accidentAmounts  = (data.accidents ?? [])
+      .map(a => a.insuranceBenefit ?? 0)
+      .filter(a => a > 0);
 
     // 용도 변경/렌트 이력
     const useHistory = data.carInfoUse1s ?? [];
@@ -131,7 +136,7 @@ const DetailParser = (() => {
 
     console.log('[EncarScore] 보험이력:', isInsurancePrivate ? '비공개 (큰 감점)' : `${insuranceCount}건`, '/ 내차피해:', myDamageCount, '회 / 렌트이력:', hasRentalHistory, '/ 소유주변경:', ownerChangeCount, '회 / 정보제공불가기간:', unavailablePeriods);
 
-    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, hasRentalHistory, hasUsageChange };
+    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, accidentAmounts, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, hasRentalHistory, hasUsageChange };
   }
 
   /* ──────────────────────────────────────────────

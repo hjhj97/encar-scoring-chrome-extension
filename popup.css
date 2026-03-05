@@ -362,11 +362,13 @@ body {
   color: #fff;
 }
 
-.grade-s { background: linear-gradient(135deg, #FFD700, #FFA000); }
-.grade-a { background: linear-gradient(135deg, #4CAF50, #2E7D32); }
-.grade-b { background: linear-gradient(135deg, #2196F3, #1565C0); }
-.grade-c { background: linear-gradient(135deg, #FF9800, #E65100); }
-.grade-d { background: linear-gradient(135deg, #F44336, #C62828); }
+.grade-s     { background: linear-gradient(135deg, #FFD700, #FFA000); }
+.grade-aplus { background: linear-gradient(135deg, #00BCD4, #0097A7); font-size: 11px; }
+.grade-a     { background: linear-gradient(135deg, #4CAF50, #2E7D32); }
+.grade-b     { background: linear-gradient(135deg, #2196F3, #1565C0); }
+.grade-c     { background: linear-gradient(135deg, #FF9800, #E65100); }
+.grade-d     { background: linear-gradient(135deg, #F44336, #C62828); }
+.grade-f     { background: linear-gradient(135deg, #880000, #550000); }
 
 /* ---- Footer ---- */
 .popup-footer {

@@ -18,36 +18,55 @@ const EncarScoring = (() => {
    *
    * originPrice가 없는 경우 보험금 절대 금액으로 판단
    */
+  // 정보제공 불가능기간 총 개월 수 계산 ("202201~202512" 형식)
+  function calcUnavailableMonths(periods) {
+    let total = 0;
+    for (const p of periods) {
+      const m = p.match(/(\d{6})~(\d{6})/);
+      if (!m) continue;
+      const sy = parseInt(m[1].slice(0, 4)), sm = parseInt(m[1].slice(4, 6));
+      const ey = parseInt(m[2].slice(0, 4)), em = parseInt(m[2].slice(4, 6));
+      total += (ey - sy) * 12 + (em - sm) + 1;
+    }
+    return total;
+  }
+
   function scoreAccident(data, maxPoints) {
     const {
-      myDamageAmount    = 0,  // 내 차 수리비 (원)
-      otherDamageAmount = 0,  // 타 차 수리비 (원)
       isInsurancePrivate = false,
-      originPrice       = 0   // 신차가 (만원)
+      originPrice        = 0,
+      accidentAmounts    = [],  // 개별 건당 insuranceBenefit
+      hasUnavailablePeriod = false,
+      unavailablePeriods   = []
     } = data;
 
-    if (isInsurancePrivate) return 0;        // 보험이력 비공개 → 0점
-    if (data.hasUnavailablePeriod) return 0; // 정보제공 불가능기간 존재 → 0점
+    if (isInsurancePrivate) return 0; // 보험이력 비공개 → 0점
 
-    const totalCostWon = myDamageAmount + otherDamageAmount;
-
+    // 기본 사고 점수: 가장 큰 단일 건 기준
     let baseScore;
-    if (totalCostWon === 0) {
-      baseScore = maxPoints; // 보고된 사고 없음
+    if (accidentAmounts.length === 0) {
+      baseScore = maxPoints; // 무사고
     } else if (originPrice > 0) {
-      // originPrice(만원) → 원화 환산
-      const originWon  = originPrice * 10000;
-      const costRatio  = totalCostWon / originWon;
+      const originWon     = originPrice * 10000;
+      const maxSingleRatio = Math.max(...accidentAmounts) / originWon;
 
-      if (costRatio <= 0.10) baseScore = maxPoints * 0.75; // 10% 이하: 경미
-      else if (costRatio <= 0.20) baseScore = maxPoints * 0.45; // 10~20%: 중간
-      else baseScore = maxPoints * 0.1;                         // 20% 초과: 심각
+      if (maxSingleRatio <= 0.10) baseScore = maxPoints * 0.75; // 10% 이하: 경미
+      else if (maxSingleRatio <= 0.20) baseScore = maxPoints * 0.45; // 10~20%: 중간
+      else baseScore = maxPoints * 0.1;                              // 20% 초과: 심각
     } else {
-      // originPrice 없는 경우 절대 금액 기준 폴백
-      if (totalCostWon < 500000)   baseScore = maxPoints * 0.85;
-      else if (totalCostWon < 2000000) baseScore = maxPoints * 0.6;
-      else if (totalCostWon < 5000000) baseScore = maxPoints * 0.35;
+      // originPrice 없는 경우 최대 단일 건 절대 금액 기준
+      const maxSingle = Math.max(...accidentAmounts);
+      if (maxSingle < 500000)    baseScore = maxPoints * 0.85;
+      else if (maxSingle < 2000000) baseScore = maxPoints * 0.6;
+      else if (maxSingle < 5000000) baseScore = maxPoints * 0.35;
       else baseScore = maxPoints * 0.1;
+    }
+
+    // 정보제공 불가능기간 패널티 (6개월 이내 -10점, 초과 -20점)
+    if (hasUnavailablePeriod) {
+      const months  = calcUnavailableMonths(unavailablePeriods);
+      const penalty = months <= 6 ? 10 : 20;
+      baseScore = Math.max(0, baseScore - penalty);
     }
 
     return baseScore;
@@ -206,24 +225,28 @@ const EncarScoring = (() => {
 
   function getGrade(score) {
     if (score >= 90) return 'S';
+    if (score >= 85) return 'A+';
     if (score >= 80) return 'A';
     if (score >= 70) return 'B';
     if (score >= 60) return 'C';
-    return 'D';
+    if (score > 40)  return 'D';
+    return 'F';
   }
 
   function getGradeColor(grade) {
-    const colors = { 'S': '#FFD700', 'A': '#4CAF50', 'B': '#2196F3', 'C': '#FF9800', 'D': '#F44336' };
+    const colors = { 'S': '#FFD700', 'A+': '#00BCD4', 'A': '#4CAF50', 'B': '#2196F3', 'C': '#FF9800', 'D': '#F44336', 'F': '#880000' };
     return colors[grade] || '#999';
   }
 
   function getGradeGradient(grade) {
     const gradients = {
-      'S': 'linear-gradient(135deg, #FFD700, #FFA000)',
-      'A': 'linear-gradient(135deg, #4CAF50, #2E7D32)',
-      'B': 'linear-gradient(135deg, #2196F3, #1565C0)',
-      'C': 'linear-gradient(135deg, #FF9800, #E65100)',
-      'D': 'linear-gradient(135deg, #F44336, #C62828)'
+      'S':  'linear-gradient(135deg, #FFD700, #FFA000)',
+      'A+': 'linear-gradient(135deg, #00BCD4, #0097A7)',
+      'A':  'linear-gradient(135deg, #4CAF50, #2E7D32)',
+      'B':  'linear-gradient(135deg, #2196F3, #1565C0)',
+      'C':  'linear-gradient(135deg, #FF9800, #E65100)',
+      'D':  'linear-gradient(135deg, #F44336, #C62828)',
+      'F':  'linear-gradient(135deg, #880000, #550000)'
     };
     return gradients[grade] || 'linear-gradient(135deg, #999, #666)';
   }
