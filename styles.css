@@ -43,7 +43,7 @@
 
 /* 등급 */
 .encar-score-grade {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 800;
   line-height: 1;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -52,7 +52,7 @@
 
 /* 점수 */
 .encar-score-number {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   opacity: 0.95;
   line-height: 1;
@@ -97,7 +97,7 @@
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  font-size: 13px;
+  font-size: 14px;
   color: #e0e0e0;
   white-space: nowrap;
   z-index: 1000;
@@ -120,7 +120,7 @@
 }
 
 .encar-tooltip-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: #fff;
   margin-bottom: 6px;
@@ -129,14 +129,14 @@
 }
 
 .encar-tooltip-total {
-  font-size: 13px;
+  font-size: 14px;
   color: #aaa;
   margin-bottom: 10px;
 }
 
 .encar-tooltip-total strong {
   color: #fff;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .encar-tooltip-divider {
@@ -150,7 +150,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .encar-tooltip-row span:first-child {
@@ -164,9 +164,36 @@
 }
 
 .encar-tooltip-detail {
-  font-size: 10px;
+  font-size: 11px;
   color: #88aacc;
   padding: 1px 0 5px 2px;
   letter-spacing: 0.01em;
   white-space: pre-line;
+}
+
+/* ---- 시세 SVG 미터 ---- */
+.encar-price-meter {
+  margin: 6px 0 2px;
+  white-space: normal;
+}
+
+.encar-price-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.encar-price-meter-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+  margin-top: 1px;
+}
+
+.encar-price-diff-text {
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  margin-top: 4px;
 }

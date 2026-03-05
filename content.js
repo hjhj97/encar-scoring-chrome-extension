@@ -129,6 +129,45 @@
         ? `신차가 ${originPrice.toLocaleString()}만원`
         : '';
 
+    // 동급매물 시세 정보 (SVG 바)
+    const market = fullData.marketPriceData;
+    let marketDetail = '';
+    if (market && market.median > 0 && price > 0) {
+      const RANGE = 0.3; // ±30% 범위
+      const deviation = price / market.median - 1;
+      const pct = Math.max(0, Math.min(100, (deviation / RANGE) * 50 + 50));
+      const absPct = Math.round(Math.abs(deviation) * 100);
+      const pinColor = deviation <= -0.05 ? '#4CAF50'
+                     : deviation >= 0.15  ? '#F44336'
+                     : deviation >= 0.05  ? '#FF9800'
+                     : '#FFD700';
+      const diffText = Math.abs(deviation) < 0.02 ? '시세 평균 수준'
+                     : deviation < 0 ? `시세대비 ${absPct}% 저렴`
+                     : `시세대비 ${absPct}% 비쌈`;
+
+      const pinXNum = 10 + (pct / 100) * 180;
+      const pinX    = pinXNum.toFixed(1);
+      const fillLeft  = Math.min(pinXNum, 100).toFixed(1);
+      const fillWidth = Math.abs(pinXNum - 100).toFixed(1);
+
+      marketDetail = `<div class="encar-price-meter">
+        <svg class="encar-price-svg" viewBox="0 0 200 36">
+          <line x1="10" y1="28" x2="190" y2="28" stroke="rgba(255,255,255,0.12)" stroke-width="2" stroke-linecap="round"/>
+          <rect x="${fillLeft}" y="27" width="${fillWidth}" height="2" fill="${pinColor}" opacity="0.5" rx="1"/>
+          <line x1="100" y1="22" x2="100" y2="34" stroke="rgba(255,255,255,0.45)" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="${pinX}" y1="19" x2="${pinX}" y2="28" stroke="${pinColor}" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="${pinX}" cy="12" r="7" fill="${pinColor}" opacity="0.9"/>
+          <circle cx="${(pinXNum - 2.5).toFixed(1)}" cy="9" r="2.5" fill="white" opacity="0.25"/>
+        </svg>
+        <div class="encar-price-meter-labels">
+          <span>← 저렴</span>
+          <span>${market.median.toLocaleString()}만원 (${market.count}대)</span>
+          <span>비쌈 →</span>
+        </div>
+        <div class="encar-price-diff-text" style="color:${pinColor}">${diffText}</div>
+      </div>`;
+    }
+
     // 연간 평균 주행거리
     const currentYear = new Date().getFullYear();
     const carAge = Math.max(1, currentYear - (2000 + (year || 0)));
@@ -157,6 +196,7 @@
         <span>${Math.round(scoreResult.breakdown.price)}/${w.price}</span>
       </div>
       ${priceDetail ? `<div class="encar-tooltip-detail">${priceDetail}</div>` : ''}
+      ${marketDetail}
       <div class="encar-tooltip-row">
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>

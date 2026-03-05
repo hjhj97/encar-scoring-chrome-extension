@@ -8,6 +8,8 @@
  *     → 보험이력 건수, 사고이력(내차피해/타차가해), 용도변경(렌트) 이력
  *  3) https://api.encar.com/v1/readside/inspection/vehicle/{id}
  *     → 성능점검 결과 (교환·판금·부식)
+ *  4) https://api.encar.com/search/car/list/general
+ *     → 동급매물 시세 (모델그룹+연식 기준, 같은 트림+비슷한 주행거리로 클라이언트 필터)
  */
 
 const DetailParser = (() => {
@@ -34,14 +36,15 @@ const DetailParser = (() => {
       // 이 경우 record API자체가 404를 반환하므로 호출 없이 비공개로 처리
       const recordViewable = vehicleData?.condition?.accident?.recordView !== false;
 
-      // 2. 보험/사고/렌트 이력 & 3. 성능점검 & 4. 엔카진단 & 5. 옵션가격 — 병렬 요청
-      const [recordData, inspectionData, diagnosisData, optionList] = await Promise.all([
+      // 2. 보험/사고/렌트 이력 & 3. 성능점검 & 4. 엔카진단 & 5. 옵션가격 & 6. 동급매물 시세 — 병렬 요청
+      const [recordData, inspectionData, diagnosisData, optionList, marketPriceData] = await Promise.all([
         (vehicleNo && recordViewable)
           ? fetchJson(`${BASE}/record/vehicle/${actualId}/open?vehicleNo=${encodeURIComponent(vehicleNo)}`)
           : null,
         fetchJson(`${BASE}/inspection/vehicle/${actualId}`),
         fetchJson(`${BASE}/diagnosis/vehicle/${actualId}`),
-        fetchJson(`https://api.encar.com/v1/readside/vehicles/car/${actualId}/options/choice`)
+        fetchJson(`https://api.encar.com/v1/readside/vehicles/car/${actualId}/options/choice`),
+        fetchMarketPrices(vehicleData)
       ]);
 
       // originPrice = 기본가 + 실제 선택된 옵션가감의 합계
@@ -71,7 +74,8 @@ const DetailParser = (() => {
         ...parseRecord(recordData, !recordViewable),
         ...parseInspection(inspectionData),
         ...parseDiagnosis(diagnosisData),
-        isInspectionPrivate
+        isInspectionPrivate,
+        marketPriceData
       };
 
     } catch (err) {
@@ -221,6 +225,84 @@ const DetailParser = (() => {
   }
 
   /* ──────────────────────────────────────────────
+   * 동급매물 시세 조회
+   * 같은 트림(Badge+BadgeDetail) + 비슷한 주행거리 기준으로 중앙값/사분위수 계산
+   * 우선순위: 트림+주행거리(±40%) → 트림+주행거리(±60%) → 트림만 → 주행거리만(±40%) → 전체
+   * ────────────────────────────────────────────── */
+  async function fetchMarketPrices(vehicleData) {
+    try {
+      const modelGroup      = vehicleData?.category?.modelGroupName;
+      const formYear        = vehicleData?.category?.formYear;
+      const gradeName       = vehicleData?.category?.gradeName;       // e.g., "2.5"
+      const gradeDetailName = vehicleData?.category?.gradeDetailName; // e.g., "캘리그래피"
+      const currentMileage  = vehicleData?.spec?.mileage ?? 0;
+
+      if (!modelGroup || !formYear) return null;
+
+      // Year.range 형식 사용 (FormYear 필터는 API에서 지원하지 않음)
+      const yearStart = `${formYear}00`;
+      const yearEnd   = `${formYear}99`;
+      const q = `(And.Hidden.N._.ModelGroup.${encodeURIComponent(modelGroup)}._.Year.range(${yearStart}..${yearEnd}).)`;
+      // 트림/주행거리 클라이언트 필터링을 위해 충분한 결과 수집
+      const url = `https://api.encar.com/search/car/list/general?q=${q}&sr=%7CModifiedDate%7C0%7C100&count=true`;
+
+      const data = await fetchJson(url);
+      if (!data?.SearchResults?.length) return null;
+
+      const allValid = data.SearchResults.filter(r =>
+        typeof r.Price === 'number' && r.Price > 0 && r.Price < 9999
+      );
+
+      // --- 같은 트림 필터 (Badge + BadgeDetail) ---
+      const trimFiltered = (gradeName && gradeDetailName)
+        ? allValid.filter(r => r.Badge === gradeName && r.BadgeDetail === gradeDetailName)
+        : (gradeName ? allValid.filter(r => r.Badge === gradeName) : allValid);
+
+      // --- 주행거리 필터 (factor = 허용 오차 비율) ---
+      function mileageFilter(arr, factor) {
+        if (currentMileage <= 0) return arr;
+        const lo = Math.max(0, currentMileage * (1 - factor));
+        const hi = currentMileage * (1 + factor);
+        return arr.filter(r => {
+          if (typeof r.Mileage !== 'number') return true; // 필드 없으면 통과
+          return r.Mileage >= lo && r.Mileage <= hi;
+        });
+      }
+
+      // 우선순위 fallback
+      let candidates = mileageFilter(trimFiltered, 0.4);           // 트림 + ±40%
+      if (candidates.length < 5) candidates = mileageFilter(trimFiltered, 0.6); // 트림 + ±60%
+      if (candidates.length < 5) candidates = trimFiltered;                     // 트림만
+      if (candidates.length < 5) candidates = mileageFilter(allValid, 0.4);    // 전체 + ±40%
+      if (candidates.length < 3) candidates = allValid;                         // 전체 fallback
+
+      const prices = candidates.map(r => r.Price).sort((a, b) => a - b);
+      if (prices.length < 3) return null;
+
+      const median = prices.length % 2 === 0
+        ? (prices[prices.length / 2 - 1] + prices[prices.length / 2]) / 2
+        : prices[Math.floor(prices.length / 2)];
+
+      const result = {
+        median,
+        count: prices.length,
+        min: prices[0],
+        max: prices[prices.length - 1],
+        p25: prices[Math.floor(prices.length * 0.25)],
+        p75: prices[Math.floor(prices.length * 0.75)]
+      };
+
+      const trimInfo = [gradeName, gradeDetailName].filter(Boolean).join(' ');
+      const mileageInfo = currentMileage > 0 ? ` / 주행 ${Math.round(currentMileage / 1000)}천km 기준` : '';
+      console.log(`[EncarScore] 동급매물 시세: ${modelGroup} ${formYear}년식 ${trimInfo}${mileageInfo}, ${candidates.length}대, 중앙값 ${median}만원 (${result.p25}~${result.p75})`);
+      return result;
+    } catch (err) {
+      console.warn('[EncarScore] 시세 조회 실패:', err);
+      return null;
+    }
+  }
+
+  /* ──────────────────────────────────────────────
    * 공통 fetch helper
    * ────────────────────────────────────────────── */
   async function fetchJson(url) {
@@ -244,7 +326,8 @@ const DetailParser = (() => {
       isAccidentFree: false,
       hasInspection: false,
       hasReplacement: false, hasWelding: false, hasCorrosion: false,
-      hasRentalHistory: false, hasUsageChange: false
+      hasRentalHistory: false, hasUsageChange: false,
+      marketPriceData: null
     };
   }
 

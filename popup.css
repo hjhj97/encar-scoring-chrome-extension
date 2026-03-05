@@ -44,14 +44,14 @@ body {
 }
 
 .popup-header h1 {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
   color: #fff;
   letter-spacing: -0.3px;
 }
 
 .header-subtitle {
-  font-size: 11px;
+  font-size: 12px;
   color: #888;
   margin-top: 1px;
 }
@@ -60,7 +60,7 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: #888;
   padding: 5px 10px;
   background: rgba(255, 255, 255, 0.04);
@@ -97,7 +97,7 @@ body {
 }
 
 .section-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: #fff;
   margin-bottom: 4px;
@@ -105,7 +105,7 @@ body {
 }
 
 .section-desc {
-  font-size: 11px;
+  font-size: 12px;
   color: #666;
   margin-bottom: 14px;
 }
@@ -118,7 +118,7 @@ body {
   color: #fff;
   border: none;
   border-radius: 10px;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
@@ -156,7 +156,7 @@ body {
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -174,7 +174,7 @@ body {
   color: #888;
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
@@ -200,7 +200,7 @@ body {
   color: #aaa;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -237,14 +237,14 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 12px;
+  font-size: 13px;
   color: #bbb;
 }
 
 .weight-value {
   font-weight: 700;
   color: #fff;
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
   min-width: 24px;
   text-align: right;
@@ -293,7 +293,7 @@ body {
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.04);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 13px;
   color: #aaa;
   display: flex;
   align-items: center;
@@ -302,12 +302,12 @@ body {
 
 .weight-total strong {
   color: #fff;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .total-warning {
   color: #FF9800;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* ---- Filter ---- */
@@ -325,7 +325,7 @@ body {
 .filter-value {
   font-weight: 700;
   color: #fff;
-  font-size: 14px;
+  font-size: 15px;
   min-width: 40px;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -346,7 +346,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
+  font-size: 13px;
   color: #999;
 }
 
@@ -357,13 +357,13 @@ body {
   width: 28px;
   height: 28px;
   border-radius: 7px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
   color: #fff;
 }
 
 .grade-s     { background: linear-gradient(135deg, #FFD700, #FFA000); }
-.grade-aplus { background: linear-gradient(135deg, #00BCD4, #0097A7); font-size: 11px; }
+.grade-aplus { background: linear-gradient(135deg, #00BCD4, #0097A7); font-size: 12px; }
 .grade-a     { background: linear-gradient(135deg, #4CAF50, #2E7D32); }
 .grade-b     { background: linear-gradient(135deg, #2196F3, #1565C0); }
 .grade-c     { background: linear-gradient(135deg, #FF9800, #E65100); }
@@ -374,6 +374,6 @@ body {
 .popup-footer {
   padding: 14px 20px;
   text-align: center;
-  font-size: 10px;
+  font-size: 11px;
   color: #444;
 }
