@@ -42,30 +42,34 @@ const EncarScoring = (() => {
 
     if (isInsurancePrivate) return 0; // 보험이력 비공개 → 0점
 
-    // 기본 사고 점수: 가장 큰 단일 건 기준
+    // 기본 사고 점수: 가장 큰 단일 건 기준 (보험지급금 vs 실제수리비 중 큰 값)
     let baseScore;
     if (accidentAmounts.length === 0) {
       baseScore = maxPoints; // 무사고
     } else if (originPrice > 0) {
-      const originWon     = originPrice * 10000;
+      const originWon      = originPrice * 10000;
       const maxSingleRatio = Math.max(...accidentAmounts) / originWon;
 
-      if (maxSingleRatio <= 0.10) baseScore = maxPoints * 0.75; // 10% 이하: 경미
-      else if (maxSingleRatio <= 0.20) baseScore = maxPoints * 0.45; // 10~20%: 중간
-      else baseScore = maxPoints * 0.1;                              // 20% 초과: 심각
+      if (maxSingleRatio <= 0.08) baseScore = maxPoints * 0.75; // 8% 이하: 경미
+      else if (maxSingleRatio <= 0.15) baseScore = maxPoints * 0.45; // 8~15%: 중간
+      else baseScore = maxPoints * 0.1;                               // 15% 초과: 심각
     } else {
       // originPrice 없는 경우 최대 단일 건 절대 금액 기준
       const maxSingle = Math.max(...accidentAmounts);
-      if (maxSingle < 500000)    baseScore = maxPoints * 0.85;
+      if (maxSingle < 500000)       baseScore = maxPoints * 0.85;
       else if (maxSingle < 2000000) baseScore = maxPoints * 0.6;
       else if (maxSingle < 5000000) baseScore = maxPoints * 0.35;
       else baseScore = maxPoints * 0.1;
     }
 
-    // 정보제공 불가능기간 패널티 (6개월 이내 -10점, 초과 -20점)
+    // 다중 사고 추가 감점 (사고 건수가 많을수록 추가 감점)
+    if (accidentAmounts.length >= 4) baseScore = Math.max(0, baseScore - 5);
+    else if (accidentAmounts.length >= 2) baseScore = Math.max(0, baseScore - 2);
+
+    // 정보제공 불가능기간 패널티 (1개월 이하 패널티 없음, 6개월 이하 -10점, 초과 -20점)
     if (hasUnavailablePeriod) {
       const months  = calcUnavailableMonths(unavailablePeriods);
-      const penalty = months <= 6 ? 10 : 20;
+      const penalty = months <= 1 ? 0 : months <= 6 ? 10 : 20;
       baseScore = Math.max(0, baseScore - penalty);
     }
 
@@ -147,11 +151,12 @@ const EncarScoring = (() => {
    *   - 프레임 교환: 큰 감점 (-12점)
    *   - 외부패널 교환: 작은 감점 (-3점)
    *
-   * [일반 성능점검표]
-   *   - 판금(용접): 큰 감점 (-10점)
-   *   - 부식: 중간 감점 (-5점)
-   *   - 교환: 작은 감점 (-2점)
-   *   - 미등록: 절반
+   * [일반 성능점검표 - 랭크별 패널티]
+   *   골격 B랭크(대쉬·필러·사이드멤버): 교환 -15, 판금 -12 (per item)
+   *   골격 A랭크(리어패널·트렁크플로어 등): 교환 -10, 판금 -8
+   *   외판 2랭크(쿼터·펜더·루프): 교환 -4, 판금 -3
+   *   외판 1랭크(도어·트렁크리드·후드): 교환 -1, 판금 -2
+   *   부식: -2 per item (랭크 무관)
    */
   function scoreInspection(data, maxPoints) {
     if (data.isInspectionPrivate) return 0; // 성능점검 비공개 → 0점
@@ -159,7 +164,8 @@ const EncarScoring = (() => {
     let score = maxPoints;
     const {
       hasInspection = false, hasReplacement = false, hasWelding = false, hasCorrosion = false,
-      hasDiagnosis  = false, diagFrameReplacement = false, diagPanelReplacement = false
+      hasDiagnosis  = false, diagFrameReplacement = false, diagPanelReplacement = false,
+      rankCounts    = null
     } = data;
 
     if (hasDiagnosis) {
@@ -169,9 +175,30 @@ const EncarScoring = (() => {
     }
 
     if (!hasInspection) return maxPoints * 0.5;
-    if (hasWelding)     score -= 10;
-    if (hasCorrosion)   score -= 5;
-    if (hasReplacement) score -= 2;
+
+    if (rankCounts) {
+      // 골격 B랭크: 대쉬패널, 필러(A/B/C), 프론트/리어 사이드멤버 등 — 최고 심각
+      score -= rankCounts.B.X * 15;
+      score -= rankCounts.B.W * 12;
+      // 골격 A랭크: 리어패널, 트렁크플로어, 인사이드패널 등 — 심각한 구조적 손상
+      score -= rankCounts.A.X * 10;
+      score -= rankCounts.A.W * 8;
+      // 외판 2랭크: 쿼터패널, 프론트펜더, 루프패널 등
+      score -= rankCounts.TWO.X * 4;
+      score -= rankCounts.TWO.W * 3;
+      // 외판 1랭크: 도어, 트렁크리드, 후드 등 — 경미
+      score -= rankCounts.ONE.X * 1;
+      score -= rankCounts.ONE.W * 2;
+      // 부식 (랭크 무관)
+      const totalCorrosion = rankCounts.ONE.C + rankCounts.TWO.C + rankCounts.A.C + rankCounts.B.C;
+      score -= totalCorrosion * 2;
+    } else {
+      // 구형 포맷 폴백 (rankCounts 없는 경우)
+      if (hasWelding)     score -= 10;
+      if (hasCorrosion)   score -= 5;
+      if (hasReplacement) score -= 2;
+    }
+
     return Math.max(0, score);
   }
 

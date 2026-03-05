@@ -117,9 +117,13 @@ const DetailParser = (() => {
     const isAccidentFree   = (myDamageCount + otherDamageCount) === 0;
     const ownerChangeCount = data.ownerChangeCnt     ?? 0;
 
-    // 개별 보험처리 건당 지급액 (insuranceBenefit)
+    // 개별 보험처리 건당 유효금액 = max(보험지급금, 실제수리비합계)
+    // 보험지급금이 수리비보다 낮을 수 있으므로 더 큰 값 사용
     const accidentAmounts  = (data.accidents ?? [])
-      .map(a => a.insuranceBenefit ?? 0)
+      .map(a => {
+        const repair = (a.partCost ?? 0) + (a.laborCost ?? 0) + (a.paintingCost ?? 0);
+        return Math.max(a.insuranceBenefit ?? 0, repair);
+      })
       .filter(a => a > 0);
 
     // 용도 변경/렌트 이력
@@ -141,24 +145,47 @@ const DetailParser = (() => {
 
   /* ──────────────────────────────────────────────
    * Inspection API 파싱 (성능점검)
-   * 응답 예시:
-   *   outers: [{partName:"전 펜더(우)", status:"X"}, ...]
-   *     status: "X" = 교환, "/" = 판금/용접, "C" = 부식·손상
-   *   simpleRepair: true/false
+   * outers[].attributes: RANK_ONE(외판1), RANK_TWO(외판2), RANK_A(골격A), RANK_B(골격B)
+   * outers[].statusTypes[].code: X=교환, /|W=판금, C|U=부식
    * ────────────────────────────────────────────── */
   function parseInspection(data) {
-    if (!data) return { hasInspection: false, hasReplacement: false, hasWelding: false, hasCorrosion: false };
+    if (!data) return { hasInspection: false, hasReplacement: false, hasWelding: false, hasCorrosion: false, rankCounts: null };
 
     const hasInspection = true;
-    // 성능점검 표: outers 배열에서 status 코드 파싱
-    // X=교환, /=판금/용접, C/U=부식
     const outers = data.outers ?? [];
-    const hasReplacement = outers.some(p => p.statusTypes?.some(st => st.code === 'X') || p.status === 'X');
-    const hasWelding     = outers.some(p => p.statusTypes?.some(st => st.code === '/' || st.code === 'W') || p.status === '/' || p.status === 'W');
-    const hasCorrosion   = outers.some(p => p.statusTypes?.some(st => st.code === 'C' || st.code === 'U') || p.status === 'C' || p.status === 'U');
 
-    console.log('[EncarScore] 성능점검 → 교환:', hasReplacement, '판금:', hasWelding, '부식:', hasCorrosion);
-    return { hasInspection, hasReplacement, hasWelding, hasCorrosion };
+    // 랭크별 상태 건수 집계
+    const rankCounts = {
+      ONE: { X: 0, W: 0, C: 0 },
+      TWO: { X: 0, W: 0, C: 0 },
+      A:   { X: 0, W: 0, C: 0 },
+      B:   { X: 0, W: 0, C: 0 }
+    };
+
+    for (const item of outers) {
+      const hasX = item.statusTypes?.some(s => s.code === 'X') || item.status === 'X';
+      const hasW = item.statusTypes?.some(s => ['/', 'W'].includes(s.code)) || ['/', 'W'].includes(item.status);
+      const hasC = item.statusTypes?.some(s => ['C', 'U'].includes(s.code)) || ['C', 'U'].includes(item.status);
+
+      const attrs = item.attributes ?? [];
+      const rank = attrs.includes('RANK_B')   ? 'B'
+                 : attrs.includes('RANK_A')   ? 'A'
+                 : attrs.includes('RANK_TWO') ? 'TWO'
+                 : 'ONE';
+
+      if (hasX) rankCounts[rank].X++;
+      if (hasW) rankCounts[rank].W++;
+      if (hasC) rankCounts[rank].C++;
+    }
+
+    const hasReplacement = outers.some(p => p.statusTypes?.some(st => st.code === 'X') || p.status === 'X');
+    const hasWelding     = outers.some(p => p.statusTypes?.some(st => ['/', 'W'].includes(st.code)) || ['/', 'W'].includes(p.status));
+    const hasCorrosion   = outers.some(p => p.statusTypes?.some(st => ['C', 'U'].includes(st.code)) || ['C', 'U'].includes(p.status));
+
+    console.log('[EncarScore] 성능점검 → 골격A교환:', rankCounts.A.X, '골격B교환:', rankCounts.B.X,
+      '외판2교환:', rankCounts.TWO.X, '외판1교환:', rankCounts.ONE.X,
+      '판금:', hasWelding, '부식:', hasCorrosion);
+    return { hasInspection, hasReplacement, hasWelding, hasCorrosion, rankCounts };
   }
 
   /* ──────────────────────────────────────────────
