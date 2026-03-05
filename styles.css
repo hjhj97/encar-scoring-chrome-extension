@@ -1,0 +1,171 @@
+/* ============================================
+   엔카 중고차 품질 점수 - 오버레이 스타일
+   ============================================ */
+
+/* 점수 배지 */
+.encar-score-badge {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Noto Sans KR', sans-serif;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: encar-score-appear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes encar-score-appear {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.encar-score-badge:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4), 0 0 0 2px rgba(255, 255, 255, 0.3);
+}
+
+/* 등급 */
+.encar-score-grade {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  letter-spacing: -0.5px;
+}
+
+/* 점수 */
+.encar-score-number {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.95;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+/* 로딩 상태 */
+.encar-score-loading {
+  background: linear-gradient(135deg, #555, #333) !important;
+}
+
+.encar-score-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: encar-spin 0.8s linear infinite;
+}
+
+@keyframes encar-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 에러 상태 */
+.encar-score-error {
+  background: linear-gradient(135deg, #666, #444) !important;
+  opacity: 0.7;
+}
+
+/* 툴팁 (상세 점수) */
+.encar-score-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 240px;
+  padding: 16px;
+  background: rgba(20, 20, 28, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+  color: #e0e0e0;
+  white-space: nowrap;
+  z-index: 1000;
+  animation: encar-tooltip-show 0.2s ease forwards;
+}
+
+@keyframes encar-tooltip-show {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.encar-score-badge:hover .encar-score-tooltip {
+  display: block;
+}
+
+.encar-tooltip-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.encar-tooltip-total {
+  font-size: 13px;
+  color: #aaa;
+  margin-bottom: 10px;
+}
+
+.encar-tooltip-total strong {
+  color: #fff;
+  font-size: 15px;
+}
+
+.encar-tooltip-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin-bottom: 10px;
+}
+
+.encar-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.encar-tooltip-row span:first-child {
+  color: #bbb;
+}
+
+.encar-tooltip-row span:last-child {
+  font-weight: 600;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.encar-tooltip-detail {
+  font-size: 10px;
+  color: #88aacc;
+  padding: 1px 0 5px 2px;
+  letter-spacing: 0.01em;
+}

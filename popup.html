@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=400, initial-scale=1.0">
+  <title>엔카 품질 점수 설정</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- 헤더 -->
+    <header class="popup-header">
+      <div class="header-logo">
+        <span class="logo-icon">🏆</span>
+        <div>
+          <h1>엔카 품질 점수</h1>
+          <p class="header-subtitle">중고차 품질 자동 분석</p>
+        </div>
+      </div>
+      <div class="header-status" id="status-indicator">
+        <span class="status-dot"></span>
+        <span id="status-text">대기중</span>
+      </div>
+    </header>
+
+    <!-- 액션 버튼 -->
+    <section class="popup-section">
+      <button class="btn-primary" id="btn-rescan">
+        <span class="btn-icon">🔄</span>
+        차량 재분석
+      </button>
+    </section>
+
+    <!-- 가중치 설정 -->
+    <section class="popup-section">
+      <h2 class="section-title">점수 가중치 설정</h2>
+      <p class="section-desc">항목별 배점을 조정하세요 (총합 100점)</p>
+
+      <div class="preset-group">
+        <button class="btn-preset" id="preset-condition">🛡️ 상태우선</button>
+        <button class="btn-preset" id="preset-price">💰 가격우선</button>
+        <button class="btn-preset btn-preset-default" id="preset-default">⚖️ 기본</button>
+      </div>
+
+      <div class="weight-group">
+        <div class="weight-item">
+          <div class="weight-label">
+            <span>🚗 사고이력</span>
+            <span class="weight-value" id="val-accident">30</span>
+          </div>
+          <input type="range" id="weight-accident" min="0" max="50" value="30" class="weight-slider">
+        </div>
+
+        <div class="weight-item">
+          <div class="weight-label">
+            <span>📏 주행거리</span>
+            <span class="weight-value" id="val-mileage">15</span>
+          </div>
+          <input type="range" id="weight-mileage" min="0" max="50" value="15" class="weight-slider">
+        </div>
+
+        <div class="weight-item">
+          <div class="weight-label">
+            <span>💰 가격</span>
+            <span class="weight-value" id="val-price">10</span>
+          </div>
+          <input type="range" id="weight-price" min="0" max="50" value="10" class="weight-slider">
+        </div>
+
+        <div class="weight-item">
+          <div class="weight-label">
+            <span>🔧 성능점검</span>
+            <span class="weight-value" id="val-inspection">15</span>
+          </div>
+          <input type="range" id="weight-inspection" min="0" max="50" value="15" class="weight-slider">
+        </div>
+
+        <div class="weight-item">
+          <div class="weight-label">
+            <span>📋 렌트이력</span>
+            <span class="weight-value" id="val-rental">20</span>
+          </div>
+          <input type="range" id="weight-rental" min="0" max="50" value="20" class="weight-slider">
+        </div>
+
+        <div class="weight-item">
+          <div class="weight-label">
+            <span>👤 소유주이력</span>
+            <span class="weight-value" id="val-ownerChanges">10</span>
+          </div>
+          <input type="range" id="weight-ownerChanges" min="0" max="50" value="10" class="weight-slider">
+        </div>
+      </div>
+
+      <div class="weight-total">
+        총합: <strong id="weight-total-value">100</strong>점
+        <span class="total-warning" id="total-warning" style="display:none">⚠️ 100점이 되도록 조정하세요</span>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn-secondary" id="btn-save-weights">저장</button>
+        <button class="btn-ghost" id="btn-reset-weights">초기화</button>
+      </div>
+    </section>
+
+    <!-- 최소 점수 필터 -->
+    <section class="popup-section">
+      <h2 class="section-title">최소 점수 필터</h2>
+      <p class="section-desc">지정 점수 미만 차량을 숨깁니다</p>
+
+      <div class="filter-row">
+        <input type="range" id="min-score-slider" min="0" max="100" value="0" class="weight-slider">
+        <span class="filter-value" id="min-score-value">0점</span>
+      </div>
+      <button class="btn-secondary" id="btn-apply-filter">필터 적용</button>
+    </section>
+
+    <!-- 등급 안내 -->
+    <section class="popup-section popup-legend">
+      <h2 class="section-title">등급 안내</h2>
+      <div class="grade-list">
+        <div class="grade-item"><span class="grade-badge grade-s">S</span> 90점 이상 · 최상급</div>
+        <div class="grade-item"><span class="grade-badge grade-a">A</span> 80점 이상 · 우수</div>
+        <div class="grade-item"><span class="grade-badge grade-b">B</span> 70점 이상 · 양호</div>
+        <div class="grade-item"><span class="grade-badge grade-c">C</span> 60점 이상 · 보통</div>
+        <div class="grade-item"><span class="grade-badge grade-d">D</span> 60점 미만 · 주의</div>
+      </div>
+    </section>
+
+    <footer class="popup-footer">
+      <span>엔카 품질 점수 v1.0</span>
+    </footer>
+  </div>
+
+  <script src="constants.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
