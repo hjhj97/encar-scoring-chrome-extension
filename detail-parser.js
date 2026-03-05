@@ -58,9 +58,10 @@ const DetailParser = (() => {
       const originPrice = basePrice + optionTotal;
       console.log(`[EncarScore] 신차가: 기본 ${basePrice} + 옵션 ${optionTotal} = ${originPrice}만원`);
 
-      // yearMonth: "202205" → year: 22 (2자리)
+      // yearMonth: "202205" → year: 22 (2자리), month: 5
       const yearMonth = vehicleData?.category?.yearMonth ?? '';
-      const year = yearMonth.length >= 4 ? parseInt(yearMonth.slice(2, 4), 10) : 0;
+      const year  = yearMonth.length >= 4 ? parseInt(yearMonth.slice(2, 4), 10) : 0;
+      const month = yearMonth.length >= 6 ? parseInt(yearMonth.slice(4, 6), 10) : 0;
 
       // 성능점검 비공개 여부: formats 배열이 비어있으면 비공개
       const isInspectionPrivate = (vehicleData?.condition?.inspection?.formats ?? []).length === 0;
@@ -69,6 +70,7 @@ const DetailParser = (() => {
       return {
         originPrice,
         year,       // API 기반 연식 (DOM 파싱보다 신뢰도 높음)
+        month,      // API 기반 출고월 (1~12, 없으면 0)
         mileage: vehicleData?.spec?.mileage ?? 0,   // API 기반 주행거리
         price: vehicleData?.advertisement?.price ?? 0, // API 기반 가격
         ...parseRecord(recordData, !recordViewable),
@@ -327,6 +329,7 @@ const DetailParser = (() => {
       hasInspection: false,
       hasReplacement: false, hasWelding: false, hasCorrosion: false,
       hasRentalHistory: false, hasUsageChange: false,
+      month: 0,
       marketPriceData: null
     };
   }

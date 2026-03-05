@@ -45,10 +45,13 @@
       // 스펙 추출 (ul > li 구조)
       const specItems = cardEl.querySelectorAll('ul li');
       if (specItems.length >= 1) {
-        // 연식: "20/01식" → 20
+        // 연식: "20/01식" → year: 20, month: 1
         const yearText = specItems[0]?.textContent?.trim() || '';
-        const yearMatch = yearText.match(/(\d{2})\/\d{2}식/);
-        if (yearMatch) data.year = parseInt(yearMatch[1], 10);
+        const yearMatch = yearText.match(/(\d{2})\/(\d{2})식/);
+        if (yearMatch) {
+          data.year  = parseInt(yearMatch[1], 10);
+          data.month = parseInt(yearMatch[2], 10);
+        }
       }
       if (specItems.length >= 2) {
         // 주행거리: "77,173km" → 77173
@@ -168,11 +171,15 @@
       </div>`;
     }
 
-    // 연간 평균 주행거리
-    const currentYear = new Date().getFullYear();
-    const carAge = Math.max(1, currentYear - (2000 + (year || 0)));
+    // 연간 평균 주행거리 (출고년월 기준 월단위 계산)
+    const { month: registMonth = 0 } = fullData;
+    const now = new Date();
+    const nowYear = now.getFullYear(), nowMonth = now.getMonth() + 1;
+    const ageMonths = (year > 0 && registMonth > 0)
+      ? Math.max(1, (nowYear - (2000 + year)) * 12 + (nowMonth - registMonth))
+      : Math.max(12, (nowYear - (2000 + (year || 0))) * 12);
     const annualKm = (mileage > 0 && year > 0)
-      ? `연평균 ${Math.round(mileage / carAge).toLocaleString()}km`
+      ? `연평균 ${Math.round(mileage / ageMonths * 12).toLocaleString()}km`
       : '';
 
     const tooltip = document.createElement('div');

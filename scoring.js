@@ -80,12 +80,15 @@ const EncarScoring = (() => {
    * 주행거리 점수 (mileage 만점)
    */
   function scoreMileage(data, maxPoints) {
-    const { mileage = 0, year = 0 } = data;
+    const { mileage = 0, year = 0, month = 0 } = data;
     if (!year || !mileage) return maxPoints * 0.5;
 
-    const currentYear = new Date().getFullYear();
-    const carAge = Math.max(1, currentYear - (2000 + year));
-    const avgAnnualKm = mileage / carAge;
+    const now = new Date();
+    const nowYear = now.getFullYear(), nowMonth = now.getMonth() + 1;
+    const ageMonths = (month > 0)
+      ? Math.max(1, (nowYear - (2000 + year)) * 12 + (nowMonth - month))
+      : Math.max(12, (nowYear - (2000 + year)) * 12);
+    const avgAnnualKm = mileage / ageMonths * 12;
 
     if (avgAnnualKm <= 10000) return maxPoints;
     if (avgAnnualKm <= 15000) return maxPoints * 0.9;
