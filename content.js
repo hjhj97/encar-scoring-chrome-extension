@@ -459,12 +459,67 @@
     return true;
   });
 
+  /**
+   * 상세 페이지 여부 확인
+   */
+  function isDetailPage() {
+    return /\/cars\/detail\/\d+/.test(location.pathname);
+  }
+
+  /**
+   * 상세 페이지 carId 추출 (URL 경로에서)
+   */
+  function getDetailCarId() {
+    const match = location.pathname.match(/\/detail\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * 상세 페이지 점수 오버레이 표시 (fixed 위치로 body에 직접 붙임)
+   */
+  async function processDetailPage() {
+    const carId = getDetailCarId();
+    if (!carId) return;
+
+    if (document.querySelector('.encar-score-badge')) return; // 중복 방지
+
+    await delay(1500); // React 렌더링 대기
+
+    const loadingBadge = createLoadingBadge();
+    loadingBadge.style.cssText += '; position: fixed !important; bottom: 24px; right: 24px; width: 72px; height: 72px; z-index: 99999;';
+    document.body.appendChild(loadingBadge);
+
+    try {
+      const detailData = await DetailParser.fetchDetailData(carId);
+
+      const titleEl = document.querySelector('h1');
+      const modelName = titleEl?.textContent?.trim().split('\n')[0] || document.title;
+
+      const fullData = { carId, modelName, ...detailData };
+      const weights = await getStoredWeights();
+      const priceMode = await getStoredPriceMode();
+      const scoreResult = EncarScoring.calculateScore(fullData, weights, { priceMode });
+
+      loadingBadge.remove();
+      const scoreBadge = createScoreBadge(scoreResult, { modelName }, weights, fullData);
+      scoreBadge.style.cssText += '; position: fixed !important; bottom: 24px; right: 24px; width: 72px; height: 72px; z-index: 99999;';
+      document.body.appendChild(scoreBadge);
+
+      console.log(`[EncarScore] 상세페이지 ${carId}: ${scoreResult.total}점 (${scoreResult.grade})`, scoreResult.breakdown);
+    } catch (error) {
+      console.error('[EncarScore] 상세페이지 처리 실패:', carId, error);
+      loadingBadge.remove();
+    }
+  }
+
   // 초기 실행
-  await delay(1500); // 페이지 로드 대기
-  await scanAndProcess();
-
-  // 동적 콘텐츠 감시
-  observeDynamicContent();
-
-  console.log('[EncarScore] 초기 스캔 완료');
+  if (isDetailPage()) {
+    await processDetailPage();
+    console.log('[EncarScore] 상세페이지 스캔 완료');
+  } else {
+    await delay(1500); // 페이지 로드 대기
+    await scanAndProcess();
+    observeDynamicContent();
+    console.log('[EncarScore] 초기 스캔 완료');
+  }
 })();
