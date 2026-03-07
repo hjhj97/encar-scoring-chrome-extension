@@ -15,7 +15,19 @@
         "https://car.encar.com/list/*",
         "https://fem.encar.com/cars/detail/*"
       ],
-      "js": ["constants.js", "scoring.js", "detail-parser.js", "content.js"],
+      "js": [
+        "constants.js",
+        "scoring/grade.js",
+        "scoring/accident.js",
+        "scoring/mileage.js",
+        "scoring/price.js",
+        "scoring/inspection.js",
+        "scoring/rental.js",
+        "scoring/owner.js",
+        "scoring/calculator.js",
+        "detail-parser.js",
+        "content.js"
+      ],
       "css": ["styles.css"],
       "run_at": "document_idle"
     }
