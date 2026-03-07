@@ -10,6 +10,8 @@
  *     → 성능점검 결과 (교환·판금·부식)
  *  4) https://api.encar.com/search/car/list/general
  *     → 동급매물 시세 (모델그룹+연식 기준, 같은 트림+비슷한 주행거리로 클라이언트 필터)
+ *  5) https://api.encar.com/search/car/list/general?q=UserId
+ *     → 판매자(딜러)의 최근 매물 목록 → 동일한 calculateScore로 평균점수 산정
  */
 
 const DetailParser = (() => {
@@ -17,9 +19,29 @@ const DetailParser = (() => {
   const BASE = 'https://api.encar.com/v1/readside';
 
   /**
-   * 차량 상세 데이터 전체 취합
+   * 차량 상세 데이터 전체 취합 (공개 API)
+   * = fetchCarData + fetchDealerAvgScore
    */
   async function fetchDetailData(carId) {
+    try {
+      const base = await fetchCarData(carId, { withMarketPrices: true });
+      if (!base) return getDefaultDetailData();
+
+      const dealerAvgScore = await fetchDealerAvgScore(base._userId, carId);
+      const { _userId, ...result } = base;
+      return { ...result, dealerAvgScore };
+    } catch (err) {
+      console.warn('[EncarScore] fetchDetailData 실패:', carId, err);
+      return getDefaultDetailData();
+    }
+  }
+
+  /**
+   * 차량 핵심 데이터 취합 (내부 함수)
+   * 딜러 평균점수 조회는 포함하지 않아 재귀 방지.
+   * withMarketPrices=false 시 시세 조회 생략 (딜러 매물 일괄 처리 시 사용).
+   */
+  async function fetchCarData(carId, { withMarketPrices = true } = {}) {
     try {
       // 1. 기본 정보 (vehicleNo + 보험이력 노출 여부 확인)
       const vehicleData = await fetchJson(`${BASE}/vehicle/${carId}`);
@@ -36,15 +58,21 @@ const DetailParser = (() => {
       // 이 경우 record API자체가 404를 반환하므로 호출 없이 비공개로 처리
       const recordViewable = vehicleData?.condition?.accident?.recordView !== false;
 
-      // 2. 보험/사고/렌트 이력 & 3. 성능점검 & 4. 엔카진단 & 5. 옵션가격 & 6. 동급매물 시세 — 병렬 요청
-      const [recordData, inspectionData, diagnosisData, optionList, marketPriceData] = await Promise.all([
+      // 판매자 정보 추출 (_userId는 내부 전달용, fetchDetailData에서 제거됨)
+      const _userId        = vehicleData?.contact?.userId ?? '';
+      const dealerName     = vehicleData?.partnership?.dealer?.name ?? '';
+      const dealerFirmName = vehicleData?.partnership?.dealer?.firm?.name ?? '';
+
+      // 2. 보험/사고/렌트 이력 & 3. 성능점검 & 4. 엔카진단 & 5. 옵션가격 & 6. 동급매물 시세 & 7. 딜러프로필 — 병렬 요청
+      const [recordData, inspectionData, diagnosisData, optionList, marketPriceData, dealerProfileData] = await Promise.all([
         (vehicleNo && recordViewable)
           ? fetchJson(`${BASE}/record/vehicle/${actualId}/open?vehicleNo=${encodeURIComponent(vehicleNo)}`)
           : null,
         fetchJson(`${BASE}/inspection/vehicle/${actualId}`),
         fetchJson(`${BASE}/diagnosis/vehicle/${actualId}`),
         fetchJson(`https://api.encar.com/v1/readside/vehicles/car/${actualId}/options/choice`),
-        fetchMarketPrices(vehicleData)
+        withMarketPrices ? fetchMarketPrices(vehicleData) : null,
+        (withMarketPrices && _userId) ? fetchJson(`${BASE}/user/${_userId}`) : null
       ]);
 
       // originPrice = 기본가 + 실제 선택된 옵션가감의 합계
@@ -70,7 +98,12 @@ const DetailParser = (() => {
       // 매물 등록 시각 (재등록 포함 현재 매물 기준)
       const firstAdvertisedDateTime = vehicleData?.manage?.firstAdvertisedDateTime ?? null;
 
+      // 딜러 프로필 정보 파싱
+      const dealerJoinedDatetime = dealerProfileData?.joinedDatetime ?? null;
+      const dealerTotalSales     = dealerProfileData?.salesStatus?.totalSales ?? 0;
+
       return {
+        _userId,
         originPrice,
         year,       // API 기반 연식 (DOM 파싱보다 신뢰도 높음)
         month,      // API 기반 출고월 (1~12, 없으면 0)
@@ -81,12 +114,15 @@ const DetailParser = (() => {
         ...parseInspection(inspectionData),
         ...parseDiagnosis(diagnosisData, vehicleData),
         isInspectionPrivate,
-        marketPriceData
+        marketPriceData,
+        dealerName,
+        dealerFirmName,
+        dealerJoinedDatetime,
+        dealerTotalSales
       };
-
     } catch (err) {
-      console.warn('[EncarScore] fetchDetailData 실패:', carId, err);
-      return getDefaultDetailData();
+      console.warn('[EncarScore] fetchCarData 실패:', carId, err);
+      return null;
     }
   }
 
@@ -314,6 +350,48 @@ const DetailParser = (() => {
   }
 
   /* ──────────────────────────────────────────────
+   * 딜러(판매자)의 최근 매물 10개 평균점수 조회
+   * fetchCarData (시세 제외)로 실제 사고/점검/렌트 데이터를 취합한 뒤
+   * calculateScore를 동일하게 적용
+   * ────────────────────────────────────────────── */
+  async function fetchDealerAvgScore(userId, excludeId) {
+    if (!userId) return null;
+    try {
+      const q = `(And.Hidden.N._.UserId.${encodeURIComponent(userId)}.)`;
+      const searchData = await fetchJson(
+        `https://api.encar.com/search/car/list/general?count=true&q=${q}&sr=%7CModifiedDate%7C0%7C11`
+      );
+      if (!searchData?.SearchResults?.length) return null;
+
+      const candidates = searchData.SearchResults
+        .filter(r => String(r.Id) !== String(excludeId))
+        .slice(0, 10);
+      if (candidates.length === 0) return null;
+
+      // 각 매물의 실제 상세 데이터 병렬 취합 (시세 조회 제외로 API 부하 최소화)
+      const carDataList = await Promise.allSettled(
+        candidates.map(r => fetchCarData(r.Id, { withMarketPrices: false }))
+      );
+
+      const scores = [];
+      for (const settled of carDataList) {
+        if (settled.status !== 'fulfilled' || !settled.value) continue;
+        const { _userId, ...carData } = settled.value;
+        const result = EncarScoring.calculateScore(carData, DEFAULT_WEIGHTS);
+        scores.push(result.total);
+      }
+
+      if (scores.length === 0) return null;
+      const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+      console.log(`[EncarScore] 딜러(${userId}) 최근 ${scores.length}개 평균: ${avg}점`);
+      return { avg, count: scores.length };
+    } catch (err) {
+      console.warn('[EncarScore] 딜러 평균점수 조회 실패:', err);
+      return null;
+    }
+  }
+
+  /* ──────────────────────────────────────────────
    * 공통 fetch helper
    * ────────────────────────────────────────────── */
   async function fetchJson(url) {
@@ -340,7 +418,12 @@ const DetailParser = (() => {
       hasRentalHistory: false, hasUsageChange: false,
       month: 0,
       firstAdvertisedDateTime: null,
-      marketPriceData: null
+      marketPriceData: null,
+      dealerAvgScore: null,
+      dealerName: '',
+      dealerFirmName: '',
+      dealerJoinedDatetime: null,
+      dealerTotalSales: 0
     };
   }
 

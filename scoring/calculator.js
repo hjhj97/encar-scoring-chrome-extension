@@ -22,7 +22,7 @@
     );
 
     return {
-      total: Math.min(100, totalScore),
+      total: Math.min(100, Math.max(0, totalScore)),
       breakdown: scores,
       grade: ns.getGrade(totalScore)
     };

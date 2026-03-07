@@ -130,7 +130,9 @@
             hasUnavailablePeriod = false, unavailablePeriods = [],
             isInspectionPrivate = false,
             hasDiagnosis = false, diagnosisTier = null,
-            firstAdvertisedDateTime = null } = fullData;
+            firstAdvertisedDateTime = null,
+            dealerJoinedDatetime = null, dealerTotalSales = 0,
+            dealerAvgScore = null, dealerName = '', dealerFirmName = '' } = fullData;
     const registedAgo = formatRelativeTime(firstAdvertisedDateTime);
 
     // 사고/보험이력 건수 텍스트
@@ -217,9 +219,22 @@
     const ageMonths = (year > 0 && registMonth > 0)
       ? Math.max(1, (nowYear - (2000 + year)) * 12 + (nowMonth - registMonth))
       : Math.max(12, (nowYear - (2000 + (year || 0))) * 12);
-    const annualKm = (mileage > 0 && year > 0)
+    const annualKm = (mileage > 0 && ageMonths > 0)
       ? `연평균 ${Math.round(mileage / ageMonths * 12).toLocaleString()}km`
       : '';
+
+    // 딜러 정보 텍스트 (가입일 + 총 판매대수)
+    let dealerText = '';
+    if (dealerName && dealerJoinedDatetime) {
+      const joinMatch = dealerJoinedDatetime.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (joinMatch) {
+         const dYear = joinMatch[1];
+         const dMonth = joinMatch[2];
+         const dDay = joinMatch[3];
+         dealerText = `판매자 가입일: ${dYear}/${dMonth}/${dDay} · 누적판매 ${dealerTotalSales}대`;
+      }
+    }
+    const dealerFullName = [dealerFirmName, dealerName].filter(Boolean).join(' ') || '판매자';
 
     const tooltip = document.createElement('div');
     tooltip.className = 'encar-score-tooltip';
@@ -259,9 +274,17 @@
         <span>${Math.round(scoreResult.breakdown.rental)}/${w.rental}</span>
       </div>
       <div class="encar-tooltip-row">
-        <span>👤 소유주이력</span>
+        <span>👤 소유주/판매자 이력</span>
         <span>${Math.round(scoreResult.breakdown.ownerChanges)}/${w.ownerChanges}</span>
       </div>
+      ${dealerAvgScore ? `
+      <div class="encar-tooltip-divider"></div>
+      <div class="encar-tooltip-row">
+        <span>🏪 ${dealerFullName} 평균</span>
+        <span style="color:${EncarScoring.getGradeColor(EncarScoring.getGrade(dealerAvgScore.avg))};font-weight:600">${dealerAvgScore.avg}점</span>
+      </div>
+      <div class="encar-tooltip-detail">최근 ${dealerAvgScore.count}개 매물 기준 (동일 기준 점수)</div>` : ''}
+      ${dealerText ? `<div class="encar-tooltip-detail">${dealerText}</div>` : ''}
     `;
     badge.appendChild(tooltip);
 
