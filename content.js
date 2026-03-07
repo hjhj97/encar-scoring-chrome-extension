@@ -94,6 +94,23 @@
   }
 
   /**
+   * 매물 등록 시각을 "N분 전" 형태의 상대 시간 문자열로 변환
+   */
+  function formatRelativeTime(dateStr) {
+    if (!dateStr) return '';
+    const past = new Date(dateStr);
+    if (isNaN(past.getTime())) return '';
+    const diffMin = Math.floor((Date.now() - past.getTime()) / 60000);
+    if (diffMin < 1)   return '방금 전';
+    if (diffMin < 60)  return `${diffMin}분 전`;
+    const diffHour = Math.floor(diffMin / 60);
+    if (diffHour < 24) return `${diffHour}시간 전`;
+    const diffDay = Math.floor(diffHour / 24);
+    if (diffDay < 30)  return `${diffDay}일 전`;
+    return `${Math.floor(diffDay / 30)}개월 전`;
+  }
+
+  /**
    * 점수 배지 DOM 생성
    */
   function createScoreBadge(scoreResult, cardData, weights, fullData = {}) {
@@ -111,7 +128,10 @@
     const { originPrice = 0, price = 0, mileage = 0, year = 0,
             insuranceCount = 0, isInsurancePrivate = false,
             hasUnavailablePeriod = false, unavailablePeriods = [],
-            isInspectionPrivate = false } = fullData;
+            isInspectionPrivate = false,
+            hasDiagnosis = false, diagnosisTier = null,
+            firstAdvertisedDateTime = null } = fullData;
+    const registedAgo = formatRelativeTime(firstAdvertisedDateTime);
 
     // 사고/보험이력 건수 텍스트
     const accidentLines = [];
@@ -205,6 +225,7 @@
     tooltip.className = 'encar-score-tooltip';
     tooltip.innerHTML = `
       <div class="encar-tooltip-title">${cardData.modelName}</div>
+      ${registedAgo ? `<div class="encar-tooltip-registed">${registedAgo} 등록</div>` : ''}
       <div class="encar-tooltip-total">종합점수: <strong>${scoreResult.total}점</strong> (${scoreResult.grade}등급)</div>
       <div class="encar-tooltip-divider"></div>
       <div class="encar-tooltip-row">
@@ -227,7 +248,12 @@
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>
       </div>
-      ${isInspectionPrivate ? `<div class="encar-tooltip-detail">조회불가 · 비공개</div>` : ''}
+      ${isInspectionPrivate ? `<div class="encar-tooltip-detail">조회불가 · 비공개</div>`
+        : hasDiagnosis ? `<div class="encar-tooltip-detail">${
+            diagnosisTier === 'PLUSPLUS' ? '엔카진단++ (+4점)'
+          : diagnosisTier === 'PLUS'    ? '엔카진단+ (+2점)'
+          : '엔카진단'
+        }</div>` : ''}
       <div class="encar-tooltip-row">
         <span>📋 렌트이력</span>
         <span>${Math.round(scoreResult.breakdown.rental)}/${w.rental}</span>

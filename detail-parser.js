@@ -67,15 +67,19 @@ const DetailParser = (() => {
       const isInspectionPrivate = (vehicleData?.condition?.inspection?.formats ?? []).length === 0;
       console.log('[EncarScore] 성능점검 비공개:', isInspectionPrivate);
 
+      // 매물 등록 시각 (재등록 포함 현재 매물 기준)
+      const firstAdvertisedDateTime = vehicleData?.manage?.firstAdvertisedDateTime ?? null;
+
       return {
         originPrice,
         year,       // API 기반 연식 (DOM 파싱보다 신뢰도 높음)
         month,      // API 기반 출고월 (1~12, 없으면 0)
         mileage: vehicleData?.spec?.mileage ?? 0,   // API 기반 주행거리
         price: vehicleData?.advertisement?.price ?? 0, // API 기반 가격
+        firstAdvertisedDateTime,
         ...parseRecord(recordData, !recordViewable),
         ...parseInspection(inspectionData),
-        ...parseDiagnosis(diagnosisData),
+        ...parseDiagnosis(diagnosisData, vehicleData),
         isInspectionPrivate,
         marketPriceData
       };
@@ -201,11 +205,16 @@ const DetailParser = (() => {
    * 프레임: 그 외 (PILLAR, SIDE_PANEL, WHEEL_HOUSE 등)
    * resultCode: "REPLACEMENT" = 교환, "NORMAL" = 정상
    * ────────────────────────────────────────────── */
-  function parseDiagnosis(data) {
-    const defaultResult = { hasDiagnosis: false, diagFrameReplacement: false, diagPanelReplacement: false };
+  function parseDiagnosis(data, vehicleData) {
+    const defaultResult = { hasDiagnosis: false, diagnosisTier: null, diagFrameReplacement: false, diagPanelReplacement: false };
     if (!data || !Array.isArray(data.items) || data.items.length === 0) return defaultResult;
 
     const hasDiagnosis = true;
+
+    // 진단 등급: diag2Partnered=true → '++', preVerified=true → '+', else → '기본'
+    const diag2Partnered = vehicleData?.partnership?.diag2Partnered ?? false;
+    const preVerified    = vehicleData?.advertisement?.preVerified ?? false;
+    const diagnosisTier  = diag2Partnered ? 'PLUSPLUS' : preVerified ? 'PLUS' : 'BASIC';
 
     // 외부패널 항목 이름 (name 필드)
     const OUTER_PANEL_NAMES = new Set([
@@ -222,8 +231,8 @@ const DetailParser = (() => {
     const diagPanelReplacement = replaced.some(item => OUTER_PANEL_NAMES.has(item.name));
     const diagFrameReplacement = replaced.some(item => !OUTER_PANEL_NAMES.has(item.name) && !COMMENT_NAMES.has(item.name));
 
-    console.log('[EncarScore] 엔카진단 → 프레임교환:', diagFrameReplacement, '패널교환:', diagPanelReplacement);
-    return { hasDiagnosis, diagFrameReplacement, diagPanelReplacement };
+    console.log(`[EncarScore] 엔카진단 ${diagnosisTier} → 프레임교환:`, diagFrameReplacement, '패널교환:', diagPanelReplacement);
+    return { hasDiagnosis, diagnosisTier, diagFrameReplacement, diagPanelReplacement };
   }
 
   /* ──────────────────────────────────────────────
@@ -330,6 +339,7 @@ const DetailParser = (() => {
       hasReplacement: false, hasWelding: false, hasCorrosion: false,
       hasRentalHistory: false, hasUsageChange: false,
       month: 0,
+      firstAdvertisedDateTime: null,
       marketPriceData: null
     };
   }

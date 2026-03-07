@@ -184,6 +184,10 @@ const EncarScoring = (() => {
     if (hasDiagnosis) {
       if (diagFrameReplacement) score -= 12;
       if (diagPanelReplacement) score -= 3;
+      // 엔카진단 등급 가산점: PLUS +2점, PLUSPLUS +4점
+      const { diagnosisTier = 'BASIC' } = data;
+      if (diagnosisTier === 'PLUSPLUS') score += 4;
+      else if (diagnosisTier === 'PLUS') score += 2;
       return Math.max(0, score);
     }
 
