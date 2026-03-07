@@ -78,6 +78,8 @@ const EncarScoring = (() => {
 
   /**
    * 주행거리 점수 (mileage 만점)
+   * - 총 주행거리: 15만km부터 1만km마다 1점 감점, 20만km 이상부터는 1만km마다 2점 감점
+   * - 연간 주행거리: 5천km 이하인 경우 1천km마다 2점 감점
    */
   function scoreMileage(data, maxPoints) {
     const { mileage = 0, year = 0, month = 0 } = data;
@@ -90,12 +92,24 @@ const EncarScoring = (() => {
       : Math.max(12, (nowYear - (2000 + year)) * 12);
     const avgAnnualKm = mileage / ageMonths * 12;
 
-    if (avgAnnualKm <= 10000) return maxPoints;
-    if (avgAnnualKm <= 15000) return maxPoints * 0.9;
-    if (avgAnnualKm <= 20000) return maxPoints * 0.7;
-    if (avgAnnualKm <= 30000) return maxPoints * 0.5;
-    if (avgAnnualKm <= 40000) return maxPoints * 0.3;
-    return maxPoints * 0.1;
+    let deduction = 0;
+
+    // 총 주행거리 감점
+    if (mileage >= 150000) {
+      // 15만~20만km 구간: 1만km마다 1점
+      deduction += Math.floor((Math.min(mileage, 200000) - 150000) / 10000);
+      // 20만km 이상 구간: 1만km마다 2점
+      if (mileage >= 200000) {
+        deduction += Math.floor((mileage - 200000) / 10000) * 2;
+      }
+    }
+
+    // 연간 주행거리 감점: 5천km 이하인 경우 1천km마다 2점
+    if (avgAnnualKm <= 5000) {
+      deduction += Math.floor((5000 - avgAnnualKm) / 1000) * 2;
+    }
+
+    return Math.max(0, maxPoints - deduction);
   }
 
   /**
