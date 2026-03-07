@@ -136,9 +136,7 @@
     const market = fullData.marketPriceData;
     let marketDetail = '';
     if (market && market.median > 0 && price > 0) {
-      const RANGE = 0.3; // ±30% 범위
       const deviation = price / market.median - 1;
-      const pct = Math.max(0, Math.min(100, (deviation / RANGE) * 50 + 50));
       const absPct = Math.round(Math.abs(deviation) * 100);
       const pinColor = deviation <= -0.05 ? '#4CAF50'
                      : deviation >= 0.15  ? '#F44336'
@@ -148,24 +146,45 @@
                      : deviation < 0 ? `시세대비 ${absPct}% 저렴`
                      : `시세대비 ${absPct}% 비쌈`;
 
-      const pinXNum = 10 + (pct / 100) * 180;
-      const pinX    = pinXNum.toFixed(1);
-      const fillLeft  = Math.min(pinXNum, 100).toFixed(1);
-      const fillWidth = Math.abs(pinXNum - 100).toFixed(1);
+      // 신차가를 오른쪽 끝 기준으로 스케일 설정
+      const hasOrigin = originPrice > 0 && originPrice > market.median * 1.05;
+      let pricePct;
+      if (hasOrigin) {
+        // [2*median - originPrice ... median(center) ... originPrice(right)]
+        const leftBound = 2 * market.median - originPrice;
+        pricePct = Math.max(0, Math.min(100, (price - leftBound) / (originPrice - leftBound) * 100));
+      } else {
+        pricePct = Math.max(0, Math.min(100, (deviation / 0.3) * 50 + 50));
+      }
+
+      const priceXNum = 10 + (pricePct / 100) * 180;
+      const priceX    = priceXNum.toFixed(1);
+      const fillLeft  = Math.min(priceXNum, 100).toFixed(1);
+      const fillWidth = Math.abs(priceXNum - 100).toFixed(1);
+
+      // 신차가 pin (오른쪽 끝 고정, 회색)
+      const originPinSvg = hasOrigin ? `
+          <line x1="190" y1="26" x2="190" y2="34" stroke="rgba(200,200,200,0.7)" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="190" cy="20" r="6" fill="rgba(180,180,180,0.6)"/>` : '';
+
+      // 라벨 오른쪽: 신차가 있으면 신차가, 없으면 "비쌈 →"
+      const rightLabel = hasOrigin ? `신차가 ${originPrice.toLocaleString()}만원` : '비쌈 →';
 
       marketDetail = `<div class="encar-price-meter">
-        <svg class="encar-price-svg" viewBox="0 0 200 36">
-          <line x1="10" y1="28" x2="190" y2="28" stroke="rgba(255,255,255,0.12)" stroke-width="2" stroke-linecap="round"/>
-          <rect x="${fillLeft}" y="27" width="${fillWidth}" height="2" fill="${pinColor}" opacity="0.5" rx="1"/>
-          <line x1="100" y1="22" x2="100" y2="34" stroke="rgba(255,255,255,0.45)" stroke-width="1.5" stroke-linecap="round"/>
-          <line x1="${pinX}" y1="19" x2="${pinX}" y2="28" stroke="${pinColor}" stroke-width="2" stroke-linecap="round"/>
-          <circle cx="${pinX}" cy="12" r="7" fill="${pinColor}" opacity="0.9"/>
-          <circle cx="${(pinXNum - 2.5).toFixed(1)}" cy="9" r="2.5" fill="white" opacity="0.25"/>
+        <svg class="encar-price-svg" viewBox="0 0 200 42">
+          <line x1="10" y1="34" x2="190" y2="34" stroke="rgba(255,255,255,0.12)" stroke-width="2" stroke-linecap="round"/>
+          <rect x="${fillLeft}" y="33" width="${fillWidth}" height="2" fill="${pinColor}" opacity="0.5" rx="1"/>
+          ${originPinSvg}
+          <line x1="100" y1="27" x2="100" y2="34" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="100" cy="21" r="6" fill="rgba(255,255,255,0.35)"/>
+          <line x1="${priceX}" y1="24" x2="${priceX}" y2="34" stroke="${pinColor}" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="${priceX}" cy="15" r="8" fill="${pinColor}" opacity="0.9"/>
+          <circle cx="${(priceXNum - 3).toFixed(1)}" cy="11" r="3" fill="white" opacity="0.25"/>
         </svg>
         <div class="encar-price-meter-labels">
           <span>← 저렴</span>
           <span>${market.median.toLocaleString()}만원 (${market.count}대)</span>
-          <span>비쌈 →</span>
+          <span>${rightLabel}</span>
         </div>
         <div class="encar-price-diff-text" style="color:${pinColor}">${diffText}</div>
       </div>`;
