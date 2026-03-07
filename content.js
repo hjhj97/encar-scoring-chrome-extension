@@ -12,6 +12,20 @@
   const processedCards = new Set();
   let isProcessing = false;
 
+  // 화면에 보이는 항목만 지연 처리하기 위한 옵저버 (API 부하 감소)
+  const cardObserver = new IntersectionObserver((entries, observer) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const card = entry.target;
+        observer.unobserve(card); // 한 번 진입하면 관찰 해제
+        processCard(card).catch(err => console.error('[EncarScore] 카드 지연 처리 오류:', err));
+      }
+    });
+  }, {
+    rootMargin: '200px 0px', // 화면에 나타나기 200px 전부터 미리 로드
+    threshold: 0.1
+  });
+
   /**
    * 차량 카드에서 기본 데이터 추출
    */
@@ -286,7 +300,45 @@
       <div class="encar-tooltip-detail">최근 ${dealerAvgScore.count}개 매물 기준 (동일 기준 점수)</div>` : ''}
       ${dealerText ? `<div class="encar-tooltip-detail">${dealerText}</div>` : ''}
     `;
-    badge.appendChild(tooltip);
+
+    // 툴팁이 잘리는 현상(overflow: hidden)을 방지하기 위해 body에 직접 삽입하여 fixed 좌표로 렌더링
+    badge.addEventListener('mouseenter', () => {
+      document.body.appendChild(tooltip);
+      tooltip.style.visibility = 'hidden';
+      tooltip.style.display = 'block';
+
+      const rect = badge.getBoundingClientRect();
+      const tooltipHeight = tooltip.offsetHeight;
+      const tooltipWidth = tooltip.offsetWidth;
+
+      // 뱃지 상단에 위치하도록 계산
+      let top = rect.top - tooltipHeight - 8;
+      // 뱃지 우측에 맞춰서 표시 (패딩 고려)
+      let left = rect.right - tooltipWidth + 12;
+
+      // 만약 위쪽이 브라우저 화면 밖으로 나간다면 뱃지 아래로 띄움
+      if (top < 10) {
+        top = rect.bottom + 8;
+      }
+      
+      // 만약 왼쪽이 브라우저 화면 밖으로 나간다면 강제 조정
+      if (left < 10) {
+        left = 10;
+      }
+
+      tooltip.style.top = `${top}px`;
+      tooltip.style.left = `${left}px`;
+      tooltip.style.right = 'auto';
+      tooltip.style.bottom = 'auto';
+      tooltip.style.visibility = 'visible';
+    });
+
+    badge.addEventListener('mouseleave', () => {
+      if (tooltip.parentNode) {
+        // 스크롤 시 잔상 방지 등 여러 상황에 대비해 부모에서 깔끔하게 제거
+        tooltip.parentNode.removeChild(tooltip);
+      }
+    });
 
     return badge;
   }
@@ -398,20 +450,18 @@
 
       console.log(`[EncarScore] ${cards.length}개 차량 카드 발견`);
 
-      // 동시 처리 수 제한 (서버 부하 방지)
-      const BATCH_SIZE = 3;
+      // 뷰포트 스크롤에 따른 Lazy-load 등록 
       const cardsArray = Array.from(cards);
+      cardsArray.forEach(card => {
+        const id = (card.getAttribute('href') || '').match(/detail\/(\d+)/)?.[1];
+        if (!id || processedCards.has(id)) return;
 
-      for (let i = 0; i < cardsArray.length; i += BATCH_SIZE) {
-        const batch = cardsArray.slice(i, i + BATCH_SIZE).filter(card => {
-          const id = (card.getAttribute('href') || '').match(/detail\/(\d+)/)?.[1];
-          if (!id || processedCards.has(id)) return false;
-          processedCards.add(id);
-          return true;
-        });
-
-        await Promise.all(batch.map(card => processCard(card)));
-      }
+        // 처리/관찰 대상 집합에 추가 (중복 방지)
+        processedCards.add(id);
+        
+        // 옵저버에 카드를 등록하여, 사용자가 스크롤해서 보일 때 processCard() 실행
+        cardObserver.observe(card);
+      });
     } catch (error) {
       console.error('[EncarScore] 스캔 오류:', error);
     }
