@@ -14,8 +14,6 @@
 
 ![툴팁 상세](docs/demo_image1.png)
 
-매물 상세 페이지에서도 점수 배지를 확인할 수 있습니다.
-![툴팁 상세](docs/demo_image2.png)
 
 ---
 
@@ -44,6 +42,10 @@
 
 ### 엔카진단 등급 반영
 - 엔카진단 기본 / 엔카진단+ (+2점) / 엔카진단++ (+4점) 가산점 자동 적용
+
+### 판매자(딜러) 정보 제공
+- 해당 매물을 등록한 딜러의 **가입일** 및 **누적 판매 대수** 표시
+- 해당 딜러의 최근 등록 매물들에 대한 **동일 기준 평균 점수** 조회 기능
 
 ---
 
@@ -100,12 +102,12 @@
 ```
 ├── manifest.json       # 확장 프로그램 설정 (Manifest V3)
 ├── constants.js        # 기본 가중치 상수
-├── scoring.js          # 점수 계산 로직
-├── detail-parser.js    # 엔카 API 파싱 및 시세 조회
-├── content.js          # 페이지 주입 스크립트 (배지·필터)
+├── scoring/            # 각 평가 항목별 채점 모듈 디렉토리
+├── detail-parser.js    # 엔카 API 파싱 및 시세, 딜러 프로필 정보 조회
+├── content.js          # 페이지 주입 스크립트 (배지 렌더링·Lazy 로딩)
 ├── background.js       # Service Worker
-├── popup.html/js/css   # 팝업 UI
-└── styles.css          # 배지·툴팁 스타일
+├── popup.html/js/css   # 팝업 UI (전략 프리셋 등)
+└── styles.css          # 배지·툴팁 오버레이 스타일
 ```
 
 ---
