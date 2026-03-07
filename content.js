@@ -257,6 +257,7 @@
       <div class="encar-tooltip-title">${cardData.modelName}</div>
       ${registedAgo ? `<div class="encar-tooltip-registed">${registedAgo} 등록</div>` : ''}
       <div class="encar-tooltip-total">종합점수: <strong>${scoreResult.total}점</strong> (${scoreResult.grade}등급)</div>
+      ${scoreResult.penalty ? `<div style="color:#ff5252; font-size:12px; margin-top:4px;">⚠️ 미공개 항목 페널티 (-40점)</div>` : ''}
       <div class="encar-tooltip-divider"></div>
       <div class="encar-tooltip-row">
         <span>🚗 사고/보험이력</span>
@@ -281,9 +282,9 @@
       ${isInspectionPrivate ? `<div class="encar-tooltip-detail">조회불가 · 비공개</div>`
         : hasDiagnosis ? `<div class="encar-tooltip-detail">${
             diagnosisTier === 'PLUSPLUS' ? '엔카진단++ (+4점)'
-          : diagnosisTier === 'PLUS'    ? '엔카진단+ (+2점)'
+          : diagnosisTier === 'PLUS'    ? '엔카진단+'
           : '엔카진단'
-        }</div>` : ''}
+        }</div>` : `<div class="encar-tooltip-detail" style="color:#ffcc00">엔카진단 미적용 (-5점)</div>`}
       <div class="encar-tooltip-row">
         <span>📋 렌트이력</span>
         <span>${Math.round(scoreResult.breakdown.rental)}/${w.rental}</span>

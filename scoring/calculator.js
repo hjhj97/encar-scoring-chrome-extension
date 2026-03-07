@@ -16,14 +16,21 @@
       ownerChanges: ns.scoreOwnerHistory(carData, weights.ownerChanges ?? 0)
     };
 
-    const totalScore = Math.round(
+    let totalScore = Math.round(
       scores.accident + scores.mileage + scores.price +
       scores.inspection + scores.rental + scores.ownerChanges
     );
 
+    let penalty = 0;
+    if (carData.isInsurancePrivate || carData.isInspectionPrivate) {
+      penalty = 40;
+      totalScore -= penalty;
+    }
+
     return {
       total: Math.min(100, Math.max(0, totalScore)),
       breakdown: scores,
+      penalty: penalty,
       grade: ns.getGrade(totalScore)
     };
   };

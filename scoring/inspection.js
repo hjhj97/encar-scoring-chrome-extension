@@ -23,16 +23,19 @@
       rankCounts    = null
     } = data;
 
+    if (!hasDiagnosis) {
+      score -= 5;
+    }
+
     if (hasDiagnosis) {
       if (diagFrameReplacement) score -= 12;
       if (diagPanelReplacement) score -= 3;
       const { diagnosisTier = 'BASIC' } = data;
       if (diagnosisTier === 'PLUSPLUS') score += 4;
-      else if (diagnosisTier === 'PLUS') score += 2;
       return Math.max(0, score);
     }
 
-    if (!hasInspection) return maxPoints * 0.5;
+    if (!hasInspection) return Math.max(0, maxPoints * 0.5 - 5);
 
     if (rankCounts) {
       score -= rankCounts.B.X * 15;

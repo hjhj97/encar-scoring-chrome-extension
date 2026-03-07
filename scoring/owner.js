@@ -7,14 +7,14 @@
 
     if (ownerChangeCount === 0) return maxPoints;
 
-    let deductionPoints = 0;
-    if (ownerChangeCount === 1) deductionPoints = 3;
-    else if (ownerChangeCount === 2) deductionPoints = 7;
-    else if (ownerChangeCount === 3) deductionPoints = 10;
-    else if (ownerChangeCount >= 4) deductionPoints = 15;
+    // 가중치(maxPoints)의 변화에 유연하게 대응하도록 감점율(%)을 지정
+    // 15점 만점 기준: 3점(20%), 7점(47%), 10점(67%), 15점(100%)
+    let deductionRatio = 0;
+    if (ownerChangeCount === 1) deductionRatio = 0.20;
+    else if (ownerChangeCount === 2) deductionRatio = 0.47;
+    else if (ownerChangeCount === 3) deductionRatio = 0.67;
+    else if (ownerChangeCount >= 4) deductionRatio = 1.0;
 
-    // 기준 배점이 15점이라는 가정 하에 슬라이더 변동 대응
-    const deductionRatio = deductionPoints / 15;
     return Math.max(0, maxPoints * (1 - deductionRatio));
   };
 })(window.EncarScoring = window.EncarScoring || {});
