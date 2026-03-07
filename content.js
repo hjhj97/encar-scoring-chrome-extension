@@ -142,6 +142,7 @@
     const { originPrice = 0, price = 0, mileage = 0, year = 0,
             insuranceCount = 0, isInsurancePrivate = false,
             hasUnavailablePeriod = false, unavailablePeriods = [],
+            ownerChangeCount = 0,
             isInspectionPrivate = false,
             hasDiagnosis = false, diagnosisTier = null,
             firstAdvertisedDateTime = null,
@@ -291,6 +292,7 @@
         <span>👤 소유주/판매자 이력</span>
         <span>${Math.round(scoreResult.breakdown.ownerChanges)}/${w.ownerChanges}</span>
       </div>
+      <div class="encar-tooltip-detail">소유자 변경: ${ownerChangeCount}회</div>
       ${dealerAvgScore ? `
       <div class="encar-tooltip-divider"></div>
       <div class="encar-tooltip-row">
