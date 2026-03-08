@@ -105,6 +105,9 @@ const DetailParser = (() => {
       return {
         _userId,
         originPrice,
+        manufacturerName: vehicleData?.category?.manufacturerName ?? '',
+        modelName: vehicleData?.category?.modelName ?? '',
+        gradeName: vehicleData?.category?.gradeName ?? '',
         year,       // API 기반 연식 (DOM 파싱보다 신뢰도 높음)
         month,      // API 기반 출고월 (1~12, 없으면 0)
         mileage: vehicleData?.spec?.mileage ?? 0,   // API 기반 주행거리

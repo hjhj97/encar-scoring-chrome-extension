@@ -173,10 +173,14 @@
     // ── 툴팁 상세 정보 계산 ──
     const { originPrice = 0, price = 0, mileage = 0, year = 0,
             insuranceCount = 0, isInsurancePrivate = false,
+            myDamageCount = 0, myDamageAmount = 0,
+            otherDamageCount = 0, otherDamageAmount = 0,
             hasUnavailablePeriod = false, unavailablePeriods = [],
             ownerChangeCount = 0,
             isInspectionPrivate = false,
+            hasInspection = false, hasReplacement = false, hasWelding = false, hasCorrosion = false,
             hasDiagnosis = false, diagnosisTier = null,
+            hasRentalHistory = false,
             firstAdvertisedDateTime = null,
             dealerJoinedDatetime = null, dealerTotalSales = 0,
             dealerAvgScore = null, dealerName = '', dealerFirmName = '' } = fullData;
@@ -187,7 +191,9 @@
     if (isInsurancePrivate) {
       accidentLines.push('조회불가 · 비공개');
     } else {
-      accidentLines.push(insuranceCount === 0 ? '무사고' : `보험처리 ${insuranceCount}건`);
+      if (insuranceCount === 0) accidentLines.push('무사고');
+      if (myDamageCount > 0) accidentLines.push(`내차피해 ${myDamageCount}회 · ${Math.round(myDamageAmount / 10000).toLocaleString()}만원`);
+      if (otherDamageCount > 0) accidentLines.push(`타차가해 ${otherDamageCount}회 · ${Math.round(otherDamageAmount / 10000).toLocaleString()}만원`);
     }
     if (hasUnavailablePeriod) {
       accidentLines.push(`⚠️ 정보제공 불가기간: ${unavailablePeriods.join(', ')}`);
@@ -282,17 +288,18 @@
       }
     }
     const dealerFullName = [dealerFirmName, dealerName].filter(Boolean).join(' ') || '판매자';
+    const apiModelName = fullData.modelName || '';
 
     const tooltip = document.createElement('div');
     tooltip.className = 'encar-score-tooltip';
     tooltip.innerHTML = `
-      <div class="encar-tooltip-title">${cardData.modelName}</div>
+      <div class="encar-tooltip-title">${apiModelName || cardData.modelName}</div>
       ${registedAgo ? `<div class="encar-tooltip-registed">${registedAgo} 등록</div>` : ''}
       <div class="encar-tooltip-total">종합점수: <strong>${scoreResult.total}점</strong> (${scoreResult.grade}등급)</div>
       ${scoreResult.penalty ? `<div style="color:#ff5252; font-size:12px; margin-top:4px;">⚠️ 미공개 항목 페널티 (-40점)</div>` : ''}
       <div class="encar-tooltip-divider"></div>
       <div class="encar-tooltip-row">
-        <span>🚗 사고/보험이력</span>
+        <span>🚗 사고/보험이력 (${insuranceCount}건)</span>
         <span>${Math.round(scoreResult.breakdown.accident)}/${w.accident}</span>
       </div>
       ${accidentText ? `<div class="encar-tooltip-detail">${accidentText}</div>` : ''}
@@ -335,6 +342,101 @@
       <div class="encar-tooltip-detail">최근 ${dealerAvgScore.count}개 매물 기준</div>` : ''}
       ${dealerText ? `<div class="encar-tooltip-detail">${dealerText}</div>` : ''}
     `;
+
+    // 클립보드 복사 텍스트 생성
+    const { manufacturerName = '', gradeName = '',
+            rankCounts = null, diagFrameReplacement = false, diagPanelReplacement = false } = fullData;
+    const brandModel = [manufacturerName, apiModelName || cardData.modelName, gradeName].filter(Boolean).join(' ');
+
+    const yearStr = (year > 0) ? `20${String(year).padStart(2, '0')}년${registMonth > 0 ? ` ${registMonth}월` : ''}` : '정보없음';
+    const mileageStr = mileage > 0 ? `${mileage.toLocaleString()}km` : '정보없음';
+
+    let priceStr = price > 0 ? `${price.toLocaleString()}만원` : '정보없음';
+    if (originPrice > 0) priceStr += ` (신차가 ${originPrice.toLocaleString()}만원)`;
+
+    // 시세 텍스트
+    let marketStr = '';
+    if (market && market.median > 0 && price > 0) {
+      const mDeviation = price / market.median - 1;
+      const mAbsPct = Math.round(Math.abs(mDeviation) * 100);
+      const mDiffText = Math.abs(mDeviation) < 0.02 ? '시세 평균 수준'
+        : mDeviation < 0 ? `시세대비 ${mAbsPct}% 저렴`
+        : `시세대비 ${mAbsPct}% 비쌈`;
+      marketStr = `${mDiffText} (동급 ${market.count}대 중간값 ${market.median.toLocaleString()}만원)`;
+    }
+
+    // 보험이력 (비공개·내차피해·타차가해·제공불가기간 포함)
+    let insuranceStr;
+    if (isInsurancePrivate) {
+      insuranceStr = '비공개';
+    } else {
+      if(insuranceCount === 0) insuranceStr = '무사고';
+      if (myDamageCount > 0) insuranceStr += ` (내차피해 ${myDamageCount}회 ${Math.round(myDamageAmount / 10000).toLocaleString()}만원)`;
+      if (otherDamageCount > 0) insuranceStr += ` (타차가해 ${otherDamageCount}회 ${Math.round(otherDamageAmount / 10000).toLocaleString()}만원)`;
+      if (hasUnavailablePeriod) insuranceStr += ` / 제공불가기간: ${unavailablePeriods.join(', ')}`;
+    }
+
+    const inspParts = [];
+    if (isInspectionPrivate) {
+      inspParts.push('비공개');
+    } else if (!hasInspection) {
+      inspParts.push('미등록');
+    } else {
+      if (hasReplacement) inspParts.push('교환');
+      if (hasWelding) inspParts.push('판금');
+      if (hasCorrosion) inspParts.push('부식');
+      if (inspParts.length === 0) inspParts.push('양호');
+      // 프레임/외판 교환 상세
+      const frameParts = [];
+      if (rankCounts) {
+        if (rankCounts.A.X > 0 || rankCounts.B.X > 0) frameParts.push(`골격교환 ${rankCounts.A.X + rankCounts.B.X}개소`);
+        if (rankCounts.ONE.X > 0 || rankCounts.TWO.X > 0) frameParts.push(`외판교환 ${rankCounts.ONE.X + rankCounts.TWO.X}개소`);
+      }
+      if (frameParts.length > 0) inspParts.push(frameParts.join(', '));
+    }
+    if (hasDiagnosis) {
+      const diagStr = diagnosisTier === 'PLUSPLUS' ? '엔카진단++' : diagnosisTier === 'PLUS' ? '엔카진단+' : '엔카진단';
+      const diagDetails = [];
+      if (diagFrameReplacement) diagDetails.push('프레임교환');
+      if (diagPanelReplacement) diagDetails.push('외판교환');
+      inspParts.push(diagDetails.length > 0 ? `${diagStr}(${diagDetails.join(',')})` : diagStr);
+    }
+    const inspStr = inspParts.join(' / ');
+
+    const rentalStr = hasRentalHistory ? '있음' : '없음';
+    const ownerStr = `${ownerChangeCount}회`;
+
+    const clipboardLines = [`모델: ${brandModel}`];
+    if (registedAgo) clipboardLines.push(`등록: ${registedAgo}`);
+    clipboardLines.push(
+      `연식: ${yearStr}`,
+      `주행거리: ${mileageStr}${annualKm ? ` (${annualKm})` : ''}`,
+      `가격: ${priceStr}`,
+    );
+    if (marketStr) clipboardLines.push(`시세: ${marketStr}`);
+    clipboardLines.push(
+      `보험이력: ${insuranceStr}`,
+      `성능점검: ${inspStr}`,
+      `렌트이력: ${rentalStr}`,
+      `소유주변경: ${ownerStr}`,
+    );
+    if (dealerAvgScore) {
+      clipboardLines.push(`${dealerFullName} 평균점수: ${dealerAvgScore.avg}점 (최근 ${dealerAvgScore.count}개 매물)`);
+    }
+    if (dealerText) clipboardLines.push(dealerText);
+    const clipboardText = clipboardLines.join('\n');
+
+    // 배지 클릭 시 클립보드 복사
+    badge.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigator.clipboard.writeText(clipboardText).then(() => {
+        const origHTML = badge.innerHTML;
+        badge.innerHTML = `<div class="encar-score-number" style="font-size:10px;">복사됨!</div>`;
+        setTimeout(() => { badge.innerHTML = origHTML; }, 1000);
+      });
+    });
+    badge.style.cursor = 'pointer';
 
     // 툴팁이 잘리는 현상(overflow: hidden)을 방지하기 위해 body에 직접 삽입하여 fixed 좌표로 렌더링
     badge.addEventListener('mouseenter', () => {
