@@ -300,7 +300,7 @@
         <span>🏪 ${dealerFullName} 평균</span>
         <span style="color:${EncarScoring.getGradeColor(EncarScoring.getGrade(dealerAvgScore.avg))};font-weight:600">${dealerAvgScore.avg}점</span>
       </div>
-      <div class="encar-tooltip-detail">최근 ${dealerAvgScore.count}개 매물 기준 (동일 기준 점수)</div>` : ''}
+      <div class="encar-tooltip-detail">최근 ${dealerAvgScore.count}개 매물 기준</div>` : ''}
       ${dealerText ? `<div class="encar-tooltip-detail">${dealerText}</div>` : ''}
     `;
 
