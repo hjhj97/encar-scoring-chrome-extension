@@ -6,29 +6,68 @@
 (async function () {
   'use strict';
 
-  console.log('[EncarScore] 크롬 익스텐션 로드됨');
+  // ═══════════════════════════════════════════════════════════════
+  // 1. 유틸리티
+  // ═══════════════════════════════════════════════════════════════
 
-  // 처리 상태 추적
-  const processedCards = new Set();
-  let isProcessing = false;
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 
-  // 화면에 보이는 항목만 지연 처리하기 위한 옵저버 (API 부하 감소)
-  const cardObserver = new IntersectionObserver((entries, observer) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        const card = entry.target;
-        observer.unobserve(card); // 한 번 진입하면 관찰 해제
-        processCard(card).catch(err => console.error('[EncarScore] 카드 지연 처리 오류:', err));
+  function formatRelativeTime(dateStr) {
+    if (!dateStr) return '';
+    const past = new Date(dateStr);
+    if (isNaN(past.getTime())) return '';
+    const diffMin = Math.floor((Date.now() - past.getTime()) / 60000);
+    if (diffMin < 1)   return '방금 전';
+    if (diffMin < 60)  return `${diffMin}분 전`;
+    const diffHour = Math.floor(diffMin / 60);
+    if (diffHour < 24) return `${diffHour}시간 전`;
+    const diffDay = Math.floor(diffHour / 24);
+    if (diffDay < 30)  return `${diffDay}일 전`;
+    return `${Math.floor(diffDay / 30)}개월 전`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 2. 스토리지
+  // ═══════════════════════════════════════════════════════════════
+
+  function getStoredWeights() {
+    return new Promise((resolve) => {
+      if (chrome?.storage?.local) {
+        chrome.storage.local.get(['weights'], (result) => {
+          resolve(result.weights || EncarScoring.DEFAULT_WEIGHTS);
+        });
+      } else {
+        resolve(EncarScoring.DEFAULT_WEIGHTS);
       }
     });
-  }, {
-    rootMargin: '200px 0px', // 화면에 나타나기 200px 전부터 미리 로드
-    threshold: 0.1
-  });
+  }
 
-  /**
-   * 차량 카드에서 기본 데이터 추출
-   */
+  function getStoredMinScore() {
+    return new Promise((resolve) => {
+      if (chrome?.storage?.local) {
+        chrome.storage.local.get(['minScore'], (result) => resolve(result.minScore ?? 0));
+      } else {
+        resolve(0);
+      }
+    });
+  }
+
+  function getStoredPriceMode() {
+    return new Promise((resolve) => {
+      if (chrome?.storage?.local) {
+        chrome.storage.local.get(['priceMode'], (result) => resolve(result.priceMode ?? 'relative'));
+      } else {
+        resolve('relative');
+      }
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 3. DOM 파싱 / 데이터 추출
+  // ═══════════════════════════════════════════════════════════════
+
   function extractCardData(cardEl) {
     const data = {
       element: cardEl,
@@ -107,26 +146,19 @@
     return data;
   }
 
-  /**
-   * 매물 등록 시각을 "N분 전" 형태의 상대 시간 문자열로 변환
-   */
-  function formatRelativeTime(dateStr) {
-    if (!dateStr) return '';
-    const past = new Date(dateStr);
-    if (isNaN(past.getTime())) return '';
-    const diffMin = Math.floor((Date.now() - past.getTime()) / 60000);
-    if (diffMin < 1)   return '방금 전';
-    if (diffMin < 60)  return `${diffMin}분 전`;
-    const diffHour = Math.floor(diffMin / 60);
-    if (diffHour < 24) return `${diffHour}시간 전`;
-    const diffDay = Math.floor(diffHour / 24);
-    if (diffDay < 30)  return `${diffDay}일 전`;
-    return `${Math.floor(diffDay / 30)}개월 전`;
+  function isDetailPage() {
+    return /\/cars\/detail\/\d+/.test(location.pathname);
   }
 
-  /**
-   * 점수 배지 DOM 생성
-   */
+  function getDetailCarId() {
+    const match = location.pathname.match(/\/detail\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 4. UI 렌더링
+  // ═══════════════════════════════════════════════════════════════
+
   function createScoreBadge(scoreResult, cardData, weights, fullData = {}) {
     const w = weights || EncarScoring.DEFAULT_WEIGHTS;
     const badge = document.createElement('div');
@@ -323,7 +355,7 @@
       if (top < 10) {
         top = rect.bottom + 8;
       }
-      
+
       // 만약 왼쪽이 브라우저 화면 밖으로 나간다면 강제 조정
       if (left < 10) {
         left = 10;
@@ -338,7 +370,6 @@
 
     badge.addEventListener('mouseleave', () => {
       if (tooltip.parentNode) {
-        // 스크롤 시 잔상 방지 등 여러 상황에 대비해 부모에서 깔끔하게 제거
         tooltip.parentNode.removeChild(tooltip);
       }
     });
@@ -346,10 +377,6 @@
     return badge;
   }
 
-
-  /**
-   * 로딩 뱃지 생성
-   */
   function createLoadingBadge() {
     const badge = document.createElement('div');
     badge.className = 'encar-score-badge encar-score-loading';
@@ -360,9 +387,26 @@
     return badge;
   }
 
-  /**
-   * 단일 차량 카드 처리
-   */
+  // ═══════════════════════════════════════════════════════════════
+  // 5. 카드 처리 & 페이지 로직
+  // ═══════════════════════════════════════════════════════════════
+
+  const processedCards = new Set();
+  let isProcessing = false;
+
+  const cardObserver = new IntersectionObserver((entries, observer) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const card = entry.target;
+        observer.unobserve(card);
+        processCard(card).catch(err => console.error('[EncarScore] 카드 지연 처리 오류:', err));
+      }
+    });
+  }, {
+    rootMargin: '200px 0px',
+    threshold: 0.1
+  });
+
   async function processCard(cardEl) {
     const cardData = extractCardData(cardEl);
 
@@ -423,188 +467,6 @@
     }
   }
 
-  /**
-   * 모든 차량 카드 스캔 및 처리
-   */
-  async function scanAndProcess() {
-    if (isProcessing) return;
-    isProcessing = true;
-
-    try {
-      // 차량 카드 선택 (여러 셀렉터 시도)
-      const selectors = [
-        'a[class*="link_item"]',
-        'a[class*="ItemBigImage"]',
-        'a[class*="ItemSmallImage"]',
-        'a[class*="item_link"]'
-      ];
-
-      let cards = [];
-      for (const selector of selectors) {
-        cards = document.querySelectorAll(selector);
-        if (cards.length > 0) break;
-      }
-
-      if (cards.length === 0) {
-        console.log('[EncarScore] 차량 카드를 찾을 수 없습니다.');
-        isProcessing = false;
-        return;
-      }
-
-      console.log(`[EncarScore] ${cards.length}개 차량 카드 발견`);
-
-      // 뷰포트 스크롤에 따른 Lazy-load 등록 
-      const cardsArray = Array.from(cards);
-      cardsArray.forEach(card => {
-        const id = (card.getAttribute('href') || '').match(/detail\/(\d+)/)?.[1];
-        if (!id || processedCards.has(id)) return;
-
-        // 처리/관찰 대상 집합에 추가 (중복 방지)
-        processedCards.add(id);
-        
-        // 옵저버에 카드를 등록하여, 사용자가 스크롤해서 보일 때 processCard() 실행
-        cardObserver.observe(card);
-      });
-    } catch (error) {
-      console.error('[EncarScore] 스캔 오류:', error);
-    }
-
-    isProcessing = false;
-  }
-
-  /**
-   * 저장된 가중치 불러오기
-   */
-  function getStoredWeights() {
-    return new Promise((resolve) => {
-      if (chrome?.storage?.local) {
-        chrome.storage.local.get(['weights'], (result) => {
-          resolve(result.weights || EncarScoring.DEFAULT_WEIGHTS);
-        });
-      } else {
-        resolve(EncarScoring.DEFAULT_WEIGHTS);
-      }
-    });
-  }
-
-  /**
-   * 저장된 최소 점수 불러오기
-   */
-  function getStoredMinScore() {
-    return new Promise((resolve) => {
-      if (chrome?.storage?.local) {
-        chrome.storage.local.get(['minScore'], (result) => resolve(result.minScore ?? 0));
-      } else {
-        resolve(0);
-      }
-    });
-  }
-
-  /**
-   * 저장된 가격 평가 모드 불러오기
-   */
-  function getStoredPriceMode() {
-    return new Promise((resolve) => {
-      if (chrome?.storage?.local) {
-        chrome.storage.local.get(['priceMode'], (result) => resolve(result.priceMode ?? 'relative'));
-      } else {
-        resolve('relative');
-      }
-    });
-  }
-
-  /**
-   * 딜레이 유틸리티
-   */
-  function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
-   * MutationObserver로 동적 로드 감지
-   */
-  function observeDynamicContent() {
-    const observer = new MutationObserver((mutations) => {
-      let hasNewCards = false;
-      for (const mutation of mutations) {
-        if (mutation.addedNodes.length > 0) {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === 1 && (
-              node.matches?.('a[class*="link_item"]') ||
-              node.querySelector?.('a[class*="link_item"]')
-            )) {
-              hasNewCards = true;
-              break;
-            }
-          }
-        }
-        if (hasNewCards) break;
-      }
-
-      if (hasNewCards) {
-        console.log('[EncarScore] 새로운 차량 카드 감지');
-        setTimeout(scanAndProcess, 500);
-      }
-    });
-
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-
-    return observer;
-  }
-
-  /**
-   * 메시지 리스너 (팝업에서 요청)
-   */
-  chrome.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
-    if (message.type === 'RESCAN') {
-      processedCards.clear();
-      document.querySelectorAll('.encar-score-badge').forEach(el => el.remove());
-      // 필터 조건도 리셋
-      document.querySelectorAll('[data-encar-score]').forEach(el => {
-        el.removeAttribute('data-encar-score');
-        el.style.display = '';
-      });
-      scanAndProcess();
-      sendResponse({ success: true });
-    }
-    if (message.type === 'GET_STATUS') {
-      sendResponse({
-        processedCount: processedCards.size,
-        isProcessing
-      });
-    }
-    if (message.type === 'APPLY_FILTER') {
-      const minScore = parseInt(message.minScore, 10) || 0;
-      document.querySelectorAll('[data-encar-score]').forEach(el => {
-        const score = parseInt(el.dataset.encarScore, 10);
-        el.style.display = (minScore > 0 && score < minScore) ? 'none' : '';
-      });
-      sendResponse({ success: true, applied: true });
-    }
-    return true;
-  });
-
-  /**
-   * 상세 페이지 여부 확인
-   */
-  function isDetailPage() {
-    return /\/cars\/detail\/\d+/.test(location.pathname);
-  }
-
-  /**
-   * 상세 페이지 carId 추출 (URL 경로에서)
-   */
-  function getDetailCarId() {
-    const match = location.pathname.match(/\/detail\/(\d+)/);
-    return match ? match[1] : null;
-  }
-
-  /**
-   * 상세 페이지 점수 오버레이 표시 (fixed 위치로 body에 직접 붙임)
-   */
   async function processDetailPage() {
     const carId = getDetailCarId();
     if (!carId) return;
@@ -640,7 +502,120 @@
     }
   }
 
+  async function scanAndProcess() {
+    if (isProcessing) return;
+    isProcessing = true;
+
+    try {
+      // 차량 카드 선택 (여러 셀렉터 시도)
+      const selectors = [
+        'a[class*="link_item"]',
+        'a[class*="ItemBigImage"]',
+        'a[class*="ItemSmallImage"]',
+        'a[class*="item_link"]'
+      ];
+
+      let cards = [];
+      for (const selector of selectors) {
+        cards = document.querySelectorAll(selector);
+        if (cards.length > 0) break;
+      }
+
+      if (cards.length === 0) {
+        console.log('[EncarScore] 차량 카드를 찾을 수 없습니다.');
+        isProcessing = false;
+        return;
+      }
+
+      console.log(`[EncarScore] ${cards.length}개 차량 카드 발견`);
+
+      // 뷰포트 스크롤에 따른 Lazy-load 등록
+      const cardsArray = Array.from(cards);
+      cardsArray.forEach(card => {
+        const id = (card.getAttribute('href') || '').match(/detail\/(\d+)/)?.[1];
+        if (!id || processedCards.has(id)) return;
+
+        // 처리/관찰 대상 집합에 추가 (중복 방지)
+        processedCards.add(id);
+
+        // 옵저버에 카드를 등록하여, 사용자가 스크롤해서 보일 때 processCard() 실행
+        cardObserver.observe(card);
+      });
+    } catch (error) {
+      console.error('[EncarScore] 스캔 오류:', error);
+    }
+
+    isProcessing = false;
+  }
+
+  function observeDynamicContent() {
+    const observer = new MutationObserver((mutations) => {
+      let hasNewCards = false;
+      for (const mutation of mutations) {
+        if (mutation.addedNodes.length > 0) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType === 1 && (
+              node.matches?.('a[class*="link_item"]') ||
+              node.querySelector?.('a[class*="link_item"]')
+            )) {
+              hasNewCards = true;
+              break;
+            }
+          }
+        }
+        if (hasNewCards) break;
+      }
+
+      if (hasNewCards) {
+        console.log('[EncarScore] 새로운 차량 카드 감지');
+        setTimeout(scanAndProcess, 500);
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+
+    return observer;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 6. 메시지 핸들러 & 초기화
+  // ═══════════════════════════════════════════════════════════════
+
+  chrome.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
+    if (message.type === 'RESCAN') {
+      processedCards.clear();
+      document.querySelectorAll('.encar-score-badge').forEach(el => el.remove());
+      // 필터 조건도 리셋
+      document.querySelectorAll('[data-encar-score]').forEach(el => {
+        el.removeAttribute('data-encar-score');
+        el.style.display = '';
+      });
+      scanAndProcess();
+      sendResponse({ success: true });
+    }
+    if (message.type === 'GET_STATUS') {
+      sendResponse({
+        processedCount: processedCards.size,
+        isProcessing
+      });
+    }
+    if (message.type === 'APPLY_FILTER') {
+      const minScore = parseInt(message.minScore, 10) || 0;
+      document.querySelectorAll('[data-encar-score]').forEach(el => {
+        const score = parseInt(el.dataset.encarScore, 10);
+        el.style.display = (minScore > 0 && score < minScore) ? 'none' : '';
+      });
+      sendResponse({ success: true, applied: true });
+    }
+    return true;
+  });
+
   // 초기 실행
+  console.log('[EncarScore] 크롬 익스텐션 로드됨');
+
   if (isDetailPage()) {
     await processDetailPage();
     console.log('[EncarScore] 상세페이지 스캔 완료');
