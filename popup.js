@@ -157,6 +157,21 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => { btn.textContent = '필터 적용'; }, 1500);
   });
 
+  // ---- OpenAI API 키 ----
+  const apiKeyInput = document.getElementById('openai-api-key');
+  chrome.storage.local.get(['openaiApiKey'], (result) => {
+    if (result.openaiApiKey) apiKeyInput.value = result.openaiApiKey;
+  });
+
+  document.getElementById('btn-save-apikey').addEventListener('click', () => {
+    const key = apiKeyInput.value.trim();
+    chrome.storage.local.set({ openaiApiKey: key }, () => {
+      const btn = document.getElementById('btn-save-apikey');
+      btn.textContent = '✓ 저장됨';
+      setTimeout(() => { btn.textContent = '저장'; }, 1500);
+    });
+  });
+
   // ---- 상태 업데이트 ----
   function updateStatus() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

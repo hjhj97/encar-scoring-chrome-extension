@@ -161,6 +161,7 @@
 
   function createScoreBadge(scoreResult, cardData, weights, fullData = {}) {
     const w = weights || EncarScoring.DEFAULT_WEIGHTS;
+    const carId = fullData.carId || cardData.carId || null;
     const badge = document.createElement('div');
     badge.className = 'encar-score-badge';
     badge.style.background = EncarScoring.getGradeGradient(scoreResult.grade);
@@ -426,17 +427,69 @@
     if (dealerText) clipboardLines.push(dealerText);
     const clipboardText = clipboardLines.join('\n');
 
-    // 배지 클릭 시 클립보드 복사
+    // 배지 클릭 시 액션 메뉴 표시
     badge.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      navigator.clipboard.writeText(clipboardText).then(() => {
-        const origHTML = badge.innerHTML;
-        badge.innerHTML = `<div class="encar-score-number" style="font-size:10px;">복사됨!</div>`;
-        setTimeout(() => { badge.innerHTML = origHTML; }, 1000);
+
+      // 이미 열린 메뉴가 있으면 닫기
+      const existing = document.querySelector('.encar-action-menu');
+      if (existing) { existing.remove(); return; }
+
+      const menu = document.createElement('div');
+      menu.className = 'encar-action-menu';
+      menu.innerHTML = `
+        <button class="encar-action-btn" data-action="copy">📋 클립보드 복사</button>
+        <button class="encar-action-btn" data-action="ai">🤖 AI 분석</button>
+      `;
+      document.body.appendChild(menu);
+
+      // 메뉴 위치 (배지 위쪽, 오른쪽 정렬)
+      const rect = badge.getBoundingClientRect();
+      const mH = menu.offsetHeight;
+      const mW = menu.offsetWidth;
+      let top = rect.top - mH - 8;
+      let left = rect.right - mW;
+      if (top < 10) top = rect.bottom + 8;
+      if (left < 10) left = 10;
+      menu.style.top = `${top}px`;
+      menu.style.left = `${left}px`;
+
+      menu.querySelector('[data-action="copy"]').addEventListener('click', (e2) => {
+        e2.stopPropagation();
+        menu.remove();
+        navigator.clipboard.writeText(clipboardText).then(() => {
+          const origHTML = badge.innerHTML;
+          badge.innerHTML = `<div class="encar-score-number" style="font-size:10px;">복사됨!</div>`;
+          setTimeout(() => { badge.innerHTML = origHTML; }, 1000);
+        });
       });
+
+      menu.querySelector('[data-action="ai"]').addEventListener('click', (e2) => {
+        e2.stopPropagation();
+        menu.remove();
+        showAIModal(carId, clipboardText);
+      });
+
+      const closeMenu = (e2) => {
+        if (!menu.contains(e2.target)) {
+          menu.remove();
+          document.removeEventListener('click', closeMenu);
+        }
+      };
+      setTimeout(() => document.addEventListener('click', closeMenu), 0);
     });
     badge.style.cursor = 'pointer';
+
+    // AI 분석 캐시 확인 → 배지에 dot 표시
+    if (carId) {
+      badge.dataset.carId = carId;
+      if (localStorage.getItem(`encar_ai_${carId}`)) {
+        const dot = document.createElement('div');
+        dot.className = 'encar-ai-dot';
+        badge.appendChild(dot);
+      }
+    }
 
     // 툴팁이 잘리는 현상(overflow: hidden)을 방지하기 위해 body에 직접 삽입하여 fixed 좌표로 렌더링
     badge.addEventListener('mouseenter', () => {
@@ -487,6 +540,92 @@
       <div class="encar-score-number" style="font-size:10px;">분석중</div>
     `;
     return badge;
+  }
+
+  async function showAIModal(carId, clipboardText) {
+    const CACHE_KEY = carId ? `encar_ai_${carId}` : null;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'encar-ai-overlay';
+    overlay.innerHTML = `
+      <div class="encar-ai-modal">
+        <div class="encar-ai-header">
+          <span>🤖 AI 분석</span>
+          <div class="encar-ai-header-actions">
+            <button class="encar-ai-refresh" title="새로 분석">🔄</button>
+            <button class="encar-ai-close">✕</button>
+          </div>
+        </div>
+        <div class="encar-ai-meta" style="display:none"></div>
+        <div class="encar-ai-body">
+          <div class="encar-ai-loading">
+            <div class="encar-ai-spinner"></div>
+            <span>분석 중...</span>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('.encar-ai-close').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    const body = overlay.querySelector('.encar-ai-body');
+    const meta = overlay.querySelector('.encar-ai-meta');
+
+    function showResult(text, savedAt) {
+      body.innerHTML = `<div class="encar-ai-text">${text.replace(/\n/g, '<br>')}</div>`;
+      if (savedAt) {
+        meta.style.display = 'flex';
+        meta.textContent = `저장: ${formatRelativeTime(new Date(savedAt).toISOString())}`;
+      }
+    }
+
+    async function fetchAndShow() {
+      body.innerHTML = `<div class="encar-ai-loading"><div class="encar-ai-spinner"></div><span>분석 중...</span></div>`;
+      meta.style.display = 'none';
+      try {
+        const response = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ type: 'ASK_OPENAI', text: clipboardText }, resolve);
+        });
+        if (response?.error) {
+          body.innerHTML = `<div class="encar-ai-error">${response.error}</div>`;
+        } else {
+          const text = response.text || '';
+          const savedAt = Date.now();
+          if (CACHE_KEY) {
+            localStorage.setItem(CACHE_KEY, JSON.stringify({ text, savedAt }));
+            // 배지 dot 추가 (아직 없는 경우)
+            document.querySelectorAll(`[data-car-id="${carId}"]`).forEach(badge => {
+              if (!badge.querySelector('.encar-ai-dot')) {
+                const dot = document.createElement('div');
+                dot.className = 'encar-ai-dot';
+                badge.appendChild(dot);
+              }
+            });
+          }
+          showResult(text, savedAt);
+        }
+      } catch (err) {
+        body.innerHTML = `<div class="encar-ai-error">오류: ${err.message}</div>`;
+      }
+    }
+
+    overlay.querySelector('.encar-ai-refresh').addEventListener('click', fetchAndShow);
+
+    // 캐시 먼저 확인
+    if (CACHE_KEY) {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        try {
+          const { text, savedAt } = JSON.parse(cached);
+          showResult(text, savedAt);
+          return;
+        } catch { /* 파싱 실패 시 새로 요청 */ }
+      }
+    }
+
+    await fetchAndShow();
   }
 
   // ═══════════════════════════════════════════════════════════════

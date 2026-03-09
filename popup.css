@@ -370,6 +370,38 @@ body {
 .grade-d     { background: linear-gradient(135deg, #F44336, #C62828); }
 .grade-f     { background: linear-gradient(135deg, #880000, #550000); }
 
+/* ---- API Key ---- */
+.api-key-row {
+  display: flex;
+  gap: 8px;
+}
+
+.api-key-input {
+  flex: 1;
+  padding: 9px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-family: monospace;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.api-key-input:focus {
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.api-key-input::placeholder {
+  color: #555;
+}
+
+.api-key-save-btn {
+  flex: none;
+  padding: 9px 16px;
+}
+
 /* ---- Footer ---- */
 .popup-footer {
   padding: 14px 20px;

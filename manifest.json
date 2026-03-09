@@ -7,7 +7,8 @@
   "host_permissions": [
     "https://car.encar.com/*",
     "https://fem.encar.com/*",
-    "https://api.encar.com/*"
+    "https://api.encar.com/*",
+    "https://api.openai.com/*"
   ],
   "content_scripts": [
     {

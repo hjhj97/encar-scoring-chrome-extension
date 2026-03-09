@@ -2,7 +2,7 @@
  * 엔카 품질 점수 - Background Service Worker
  */
 
-importScripts('constants.js');
+importScripts('constants.js', 'openai.js');
 
 // 설치 시 기본 설정 (DEFAULT_WEIGHTS는 constants.js에서 로드)
 chrome.runtime.onInstalled.addListener(() => {
@@ -11,6 +11,26 @@ chrome.runtime.onInstalled.addListener(() => {
     minScore: 0
   });
   console.log('[EncarScore] 익스텐션 설치 완료');
+});
+
+// OpenAI API 호출 (content script에서 메시지로 요청)
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'ASK_OPENAI') {
+    chrome.storage.local.get(['openaiApiKey'], async (result) => {
+      const apiKey = result.openaiApiKey?.trim();
+      if (!apiKey) {
+        sendResponse({ error: 'API 키가 설정되지 않았습니다. 팝업에서 키를 입력해주세요.' });
+        return;
+      }
+      try {
+        const text = await askOpenAI(message.text, apiKey);
+        sendResponse({ text });
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    });
+    return true; // 비동기 응답 유지
+  }
 });
 
 // 탭 업데이트 시 아이콘 상태 관리

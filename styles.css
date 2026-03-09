@@ -175,6 +175,165 @@
   white-space: pre-line;
 }
 
+/* ---- 액션 메뉴 (배지 클릭 시) ---- */
+.encar-action-menu {
+  position: fixed;
+  z-index: 1000001;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(20, 20, 28, 0.97);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: encar-tooltip-show 0.15s ease forwards;
+}
+
+.encar-action-btn {
+  display: block;
+  width: 100%;
+  padding: 9px 14px;
+  background: transparent;
+  color: #e0e0e0;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Noto Sans KR', sans-serif;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.encar-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* ---- AI 분석 모달 ---- */
+.encar-ai-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000002;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: encar-tooltip-show 0.2s ease forwards;
+}
+
+.encar-ai-modal {
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  background: rgba(20, 20, 28, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Noto Sans KR', sans-serif;
+}
+
+.encar-ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.encar-ai-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.encar-ai-refresh,
+.encar-ai-close {
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 15px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.encar-ai-refresh:hover,
+.encar-ai-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.encar-ai-meta {
+  display: flex;
+  align-items: center;
+  padding: 6px 18px;
+  font-size: 11px;
+  color: #4CAF50;
+  background: rgba(76, 175, 80, 0.06);
+  border-bottom: 1px solid rgba(76, 175, 80, 0.12);
+}
+
+.encar-ai-body {
+  padding: 20px 18px;
+  min-height: 100px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.encar-ai-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #888;
+  font-size: 14px;
+}
+
+.encar-ai-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: encar-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.encar-ai-text {
+  font-size: 14px;
+  color: #e0e0e0;
+  line-height: 1.85;
+}
+
+.encar-ai-error {
+  font-size: 14px;
+  color: #ff6b6b;
+  line-height: 1.6;
+}
+
+/* ---- 배지 AI 캐시 dot ---- */
+.encar-ai-dot {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4CAF50;
+  box-shadow: 0 0 6px rgba(76, 175, 80, 0.9);
+  pointer-events: none;
+}
+
 /* ---- 시세 SVG 미터 ---- */
 .encar-price-meter {
   margin: 6px 0 2px;
