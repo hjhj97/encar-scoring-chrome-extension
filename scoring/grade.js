@@ -3,8 +3,8 @@
  */
 ((ns) => {
   ns.getGrade = function (score) {
-    if (score >= 90) return 'S';
-    if (score >= 85) return 'A+';
+    if (score >= 95) return 'S';
+    if (score >= 90) return 'A+';
     if (score >= 80) return 'A';
     if (score >= 70) return 'B';
     if (score >= 60) return 'C';
