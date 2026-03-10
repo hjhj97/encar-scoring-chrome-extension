@@ -13,24 +13,29 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('[EncarScore] 익스텐션 설치 완료');
 });
 
-// OpenAI API 호출 (content script에서 메시지로 요청)
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === 'ASK_OPENAI') {
-    chrome.storage.local.get(['openaiApiKey'], async (result) => {
-      const apiKey = result.openaiApiKey?.trim();
-      if (!apiKey) {
-        sendResponse({ error: 'API 키가 설정되지 않았습니다. 팝업에서 키를 입력해주세요.' });
-        return;
-      }
-      try {
-        const text = await askOpenAI(message.text, apiKey);
-        sendResponse({ text });
-      } catch (err) {
-        sendResponse({ error: err.message });
-      }
-    });
-    return true; // 비동기 응답 유지
-  }
+// OpenAI API 스트리밍 호출 (포트 연결 방식)
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'openai-stream') return;
+
+  port.onMessage.addListener(async (message) => {
+    if (message.type !== 'ASK_OPENAI_STREAM') return;
+
+    const result = await chrome.storage.local.get(['openaiApiKey']);
+    const apiKey = result.openaiApiKey?.trim();
+    if (!apiKey) {
+      port.postMessage({ type: 'error', error: 'API 키가 설정되지 않았습니다. 팝업에서 키를 입력해주세요.' });
+      return;
+    }
+
+    try {
+      const fullText = await askOpenAIStream(message.text, apiKey, (chunk) => {
+        port.postMessage({ type: 'chunk', chunk });
+      });
+      port.postMessage({ type: 'done', text: fullText });
+    } catch (err) {
+      port.postMessage({ type: 'error', error: err.message });
+    }
+  });
 });
 
 // 탭 업데이트 시 아이콘 상태 관리

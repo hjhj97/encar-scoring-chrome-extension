@@ -581,21 +581,32 @@
       }
     }
 
-    async function fetchAndShow() {
+    function fetchAndShow() {
       body.innerHTML = `<div class="encar-ai-loading"><div class="encar-ai-spinner"></div><span>분석 중...</span></div>`;
       meta.style.display = 'none';
-      try {
-        const response = await new Promise((resolve) => {
-          chrome.runtime.sendMessage({ type: 'ASK_OPENAI', text: clipboardText }, resolve);
-        });
-        if (response?.error) {
-          body.innerHTML = `<div class="encar-ai-error">${response.error}</div>`;
-        } else {
-          const text = response.text || '';
+
+      const port = chrome.runtime.connect({ name: 'openai-stream' });
+      let textEl = null;
+      let fullText = '';
+
+      port.onMessage.addListener((msg) => {
+        if (msg.type === 'chunk') {
+          if (!textEl) {
+            body.innerHTML = '';
+            textEl = document.createElement('div');
+            textEl.className = 'encar-ai-text';
+            body.appendChild(textEl);
+          }
+          fullText += msg.chunk;
+          textEl.innerHTML = fullText.replace(/\n/g, '<br>');
+          // 스크롤 하단 유지
+          body.scrollTop = body.scrollHeight;
+        } else if (msg.type === 'done') {
+          fullText = msg.text || fullText;
+          if (textEl) textEl.innerHTML = fullText.replace(/\n/g, '<br>');
           const savedAt = Date.now();
           if (CACHE_KEY) {
-            localStorage.setItem(CACHE_KEY, JSON.stringify({ text, savedAt }));
-            // 배지 dot 추가 (아직 없는 경우)
+            localStorage.setItem(CACHE_KEY, JSON.stringify({ text: fullText, savedAt }));
             document.querySelectorAll(`[data-car-id="${carId}"]`).forEach(badge => {
               if (!badge.querySelector('.encar-ai-dot')) {
                 const dot = document.createElement('div');
@@ -604,11 +615,18 @@
               }
             });
           }
-          showResult(text, savedAt);
+          if (savedAt) {
+            meta.style.display = 'flex';
+            meta.textContent = `저장: ${formatRelativeTime(new Date(savedAt).toISOString())}`;
+          }
+          port.disconnect();
+        } else if (msg.type === 'error') {
+          body.innerHTML = `<div class="encar-ai-error">${msg.error}</div>`;
+          port.disconnect();
         }
-      } catch (err) {
-        body.innerHTML = `<div class="encar-ai-error">오류: ${err.message}</div>`;
-      }
+      });
+
+      port.postMessage({ type: 'ASK_OPENAI_STREAM', text: clipboardText });
     }
 
     overlay.querySelector('.encar-ai-refresh').addEventListener('click', fetchAndShow);
@@ -625,7 +643,7 @@
       }
     }
 
-    await fetchAndShow();
+    fetchAndShow();
   }
 
   // ═══════════════════════════════════════════════════════════════
