@@ -89,8 +89,10 @@
   display: none;
   position: fixed;
   pointer-events: none;
-  min-width: 240px;
-  padding: 16px;
+  width: 420px;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  padding: 13px 14px;
   background: rgba(20, 20, 28, 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -117,25 +119,33 @@
 
 /* JS에서 fixed로 렌더링되므로 hover 블록 제거 */
 
+.encar-tooltip-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 5px;
+}
+
 .encar-tooltip-title {
+  min-width: 0;
   font-size: 15px;
   font-weight: 700;
   color: #fff;
-  margin-bottom: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .encar-tooltip-registed {
+  flex-shrink: 0;
   font-size: 11px;
   color: #aaa;
-  margin-bottom: 6px;
 }
 
 .encar-tooltip-total {
   font-size: 14px;
   color: #aaa;
-  margin-bottom: 10px;
+  margin-bottom: 7px;
 }
 
 .encar-tooltip-total strong {
@@ -146,14 +156,14 @@
 .encar-tooltip-divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.1);
-  margin-bottom: 10px;
+  margin-bottom: 7px;
 }
 
 .encar-tooltip-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 0;
+  padding: 3px 0;
   font-size: 13px;
 }
 
@@ -170,9 +180,26 @@
 .encar-tooltip-detail {
   font-size: 11px;
   color: #88aacc;
-  padding: 1px 0 5px 2px;
+  padding: 0 0 3px 2px;
   letter-spacing: 0.01em;
   white-space: pre-line;
+}
+
+.encar-sold-price-detail {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.encar-sold-price-detail strong {
+  color: #80cbc4;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.encar-sold-price-detail [data-encar-sold-count] {
+  color: #78909c;
+  font-size: 10px;
 }
 
 /* ---- 액션 메뉴 (배지 클릭 시) ---- */
@@ -336,8 +363,34 @@
 
 /* ---- 시세 SVG 미터 ---- */
 .encar-price-meter {
-  margin: 6px 0 2px;
+  margin: 3px 0 1px;
   white-space: normal;
+}
+
+.encar-price-axis-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-bottom: 2px;
+  padding: 0 4px;
+}
+
+.encar-price-score-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.encar-price-score-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4CAF50;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 4px rgba(76, 175, 80, 0.65);
 }
 
 .encar-price-svg {
@@ -358,5 +411,75 @@
   font-size: 12px;
   font-weight: 700;
   text-align: center;
-  margin-top: 4px;
+  margin-top: 2px;
+}
+
+/* ---- 연식별 평균가격 + 매물수 복합 차트 ---- */
+.encar-year-market-chart {
+  width: 100%;
+  max-width: 100%;
+  margin-top: 2px;
+  white-space: normal;
+}
+
+.encar-year-market-chart > .encar-tooltip-divider {
+  margin: 8px 0 7px;
+}
+
+.encar-year-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.encar-year-chart-title {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.encar-year-chart-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 8px;
+}
+
+.encar-year-chart-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.encar-year-count-swatch {
+  width: 8px;
+  height: 6px;
+  border-radius: 1px;
+  background: rgba(100, 181, 246, 0.65);
+}
+
+.encar-year-price-swatch {
+  width: 10px;
+  height: 2px;
+  border-radius: 2px;
+  background: #FFD54F;
+  box-shadow: 0 0 4px rgba(255, 213, 79, 0.5);
+}
+
+.encar-year-sold-price-swatch {
+  width: 10px;
+  height: 0;
+  border-top: 2px dashed #FF7043;
+}
+
+.encar-year-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 0;
+  overflow: visible;
 }
