@@ -255,6 +255,36 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log('[EncarScore] 익스텐션 설치 완료');
 });
 
+// 판매완료 페이지는 EUC-KR HTML이며 CORS 대상이므로 서비스 워커에서 대신 조회한다.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const isSingleYear = message?.type === 'FETCH_ENCAR_SOLD_OUT_AVERAGE';
+  const isAllYears = message?.type === 'FETCH_ENCAR_SOLD_OUT_YEARLY_AVERAGES';
+  if (!isSingleYear && !isAllYears) return false;
+
+  const carId = String(message.carId || '');
+  if (!/^\d+$/.test(carId)) {
+    sendResponse({ ok: false, error: '잘못된 차량 ID' });
+    return false;
+  }
+
+  const request = isAllYears
+    ? fetchSoldOutYearlyAverages(
+        carId,
+        message.yearReferences,
+        message.carType,
+        message.broadenTrim === true
+      )
+    : fetchSoldOutAverage(carId, Number(message.referencePrice) || 0);
+
+  request
+    .then(data => sendResponse({ ok: true, data }))
+    .catch(error => {
+      console.warn('[EncarScore] 판매완료 평균가 조회 실패:', error);
+      sendResponse({ ok: false, error: error.message });
+    });
+  return true;
+});
+
 // OpenAI API 스트리밍 호출 (포트 연결 방식)
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'openai-stream') return;

@@ -7,6 +7,7 @@
   "host_permissions": [
     "https://car.encar.com/*",
     "https://fem.encar.com/*",
+    "https://www.encar.com/*",
     "https://api.encar.com/*",
     "https://api.openai.com/*"
   ],
