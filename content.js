@@ -54,16 +54,6 @@
     });
   }
 
-  function getStoredPriceMode() {
-    return new Promise((resolve) => {
-      if (chrome?.storage?.local) {
-        chrome.storage.local.get(['priceMode'], (result) => resolve(result.priceMode ?? 'relative'));
-      } else {
-        resolve('relative');
-      }
-    });
-  }
-
   // ═══════════════════════════════════════════════════════════════
   // 3. DOM 파싱 / 데이터 추출
   // ═══════════════════════════════════════════════════════════════
@@ -159,6 +149,220 @@
   // 4. UI 렌더링
   // ═══════════════════════════════════════════════════════════════
 
+  function createYearlyMarketChart(yearlyMarketData, carYear, originPrice = 0, soldOutYearlyData = null) {
+    const points = (yearlyMarketData?.points || [])
+      .filter(point =>
+        Number.isInteger(point.age) && point.age >= 0 &&
+        Number.isFinite(point.avgPrice) && point.avgPrice > 0 &&
+        Number.isFinite(point.count) && point.count > 0
+      )
+      .sort((a, b) => a.age - b.age);
+    if (points.length === 0) return '';
+
+    const currentCalendarYear = new Date().getFullYear();
+    const soldPoints = (soldOutYearlyData?.points || [])
+      .map(point => ({
+        ...point,
+        age: currentCalendarYear - Number(point.year),
+        avgPrice: Number(point.average)
+      }))
+      .filter(point =>
+        Number.isInteger(point.age) && point.age >= 0 &&
+        Number.isFinite(point.avgPrice) && point.avgPrice > 0 &&
+        Number.isFinite(point.count) && point.count > 0
+      )
+      .sort((a, b) => a.age - b.age);
+
+    const chartWidth = 280;
+    const chartCenter = chartWidth / 2;
+    const priceAxisX = chartWidth - 2;
+    const plotLeft = 24;
+    const plotRight = 256;
+    const plotTop = 11;
+    const baselineY = 54;
+    const maxAge = Math.max(
+      ...points.map(point => point.age),
+      ...soldPoints.map(point => point.age)
+    );
+    const maxCount = Math.max(...points.map(point => point.count));
+    const parsedOriginPrice = Number(originPrice);
+    const newCarPrice = Number.isFinite(parsedOriginPrice) && parsedOriginPrice > 0
+      ? parsedOriginPrice
+      : null;
+    const avgPrices = [
+      ...points.map(point => point.avgPrice),
+      ...soldPoints.map(point => point.avgPrice)
+    ];
+    const scalePrices = newCarPrice ? [...avgPrices, newCarPrice] : avgPrices;
+    const rawMinPrice = Math.min(...scalePrices);
+    const rawMaxPrice = Math.max(...scalePrices);
+    const pricePadding = Math.max(100, (rawMaxPrice - rawMinPrice) * 0.12);
+    const minPrice = Math.max(0, Math.floor((rawMinPrice - pricePadding) / 100) * 100);
+    let maxPrice = Math.ceil((rawMaxPrice + pricePadding) / 100) * 100;
+    if (maxPrice <= minPrice) maxPrice = minPrice + 100;
+
+    // 신차가가 있으면 가장 왼쪽을 신차가 전용 칸으로 비우고 연식별 데이터는 그 오른쪽부터 배치한다.
+    const ageOffset = newCarPrice ? 1 : 0;
+    const xDenominator = Math.max(1, maxAge + ageOffset);
+    const calcAgeX = age => plotLeft + ((age + ageOffset) / xDenominator) * (plotRight - plotLeft);
+    const calcCountY = count => baselineY - (count / maxCount) * (baselineY - plotTop);
+    const calcPriceY = price => {
+      const ratio = (price - minPrice) / (maxPrice - minPrice);
+      return baselineY - Math.max(0, Math.min(1, ratio)) * (baselineY - plotTop);
+    };
+
+    // x축은 1년 단위 좌표를 유지하되, 연식이 많으면 눈금 문자만 간격을 띄워 표시한다.
+    const slotWidth = (plotRight - plotLeft) / Math.max(1, maxAge + ageOffset + 1);
+    const barWidth = Math.max(2.5, Math.min(11, slotWidth * 0.68));
+    const ageLabelStep = Math.max(1, Math.ceil((maxAge + 1) / 11));
+    const compactPriceLabels = slotWidth < 18;
+    const livePriceLabelSize = compactPriceLabels ? 6.3 : 7.2;
+    const soldPriceLabelSize = compactPriceLabels ? 6.1 : 7;
+    const pointsByAge = new Map(points.map(point => [point.age, point]));
+
+    const barsSvg = points.map(point => {
+      const x = calcAgeX(point.age);
+      const y = calcCountY(point.count);
+      return `<rect x="${(x - barWidth / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${(baselineY - y).toFixed(1)}" rx="1.5" fill="rgba(100,181,246,0.55)">
+        <title>출고 ${point.age}년 · ${point.year}년식 · ${point.count}대 · 평균 ${point.avgPrice.toLocaleString()}만원</title>
+      </rect>`;
+    }).join('');
+
+    const priceLinePoints = [
+      ...(newCarPrice ? [{ x: plotLeft, price: newCarPrice }] : []),
+      ...points.map(point => ({ x: calcAgeX(point.age), price: point.avgPrice }))
+    ];
+    const priceLinePath = priceLinePoints.map((point, index) => {
+      const command = index === 0 ? 'M' : 'L';
+      return `${command} ${point.x.toFixed(1)} ${calcPriceY(point.price).toFixed(1)}`;
+    }).join(' ');
+
+    const pricePointElements = points.map(point => {
+      const x = calcAgeX(point.age);
+      const y = calcPriceY(point.avgPrice);
+      const label = compactPriceLabels
+        ? `${(point.avgPrice / 1000).toFixed(1)}천`
+        : point.avgPrice.toLocaleString();
+      const labelY = Math.max(7, y - 3.5);
+      const depreciation = newCarPrice
+        ? Math.round((1 - point.avgPrice / newCarPrice) * 100)
+        : null;
+      const depreciationText = depreciation === null
+        ? ''
+        : depreciation >= 0
+          ? ` · 신차가 대비 ${depreciation}% 감가`
+          : ` · 신차가보다 ${Math.abs(depreciation)}% 높음`;
+      return {
+        circle: `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.7" fill="#FFD54F" stroke="#fff" stroke-width="0.8">
+          <title>출고 ${point.age}년 · 평균 ${point.avgPrice.toLocaleString()}만원${depreciationText}</title>
+        </circle>`,
+        label: `<text x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" fill="#FFD54F" stroke="rgba(20,20,28,0.92)" stroke-width="1.5" paint-order="stroke" text-anchor="middle" font-size="${livePriceLabelSize}" font-weight="700">${label}</text>`
+      };
+    });
+    const pricePointsSvg = pricePointElements.map(element => element.circle).join('');
+    const priceLabelsSvg = pricePointElements.map(element => element.label).join('');
+
+    // 최근 1년 판매완료 평균가는 주황빛 빨간 점선과 속이 빈 점으로 판매 중 평균가와 구분한다.
+    let previousSoldAge = null;
+    const soldPriceLinePath = soldPoints.map(point => {
+      const command = previousSoldAge === null || point.age - previousSoldAge > 1 ? 'M' : 'L';
+      previousSoldAge = point.age;
+      return `${command} ${calcAgeX(point.age).toFixed(1)} ${calcPriceY(point.avgPrice).toFixed(1)}`;
+    }).join(' ');
+
+    const soldPricePointElements = soldPoints.map(point => {
+      const x = calcAgeX(point.age);
+      const y = calcPriceY(point.avgPrice);
+      const label = compactPriceLabels
+        ? `${(point.avgPrice / 1000).toFixed(1)}천`
+        : point.avgPrice.toLocaleString();
+      // 판매중 가격은 점 바로 위, 판매완료 가격은 한 줄 더 위(상단에서는 아래)에 둬
+      // 같은 연식의 두 평균가가 비슷해도 숫자가 포개지지 않게 한다.
+      const labelY = y < plotTop + 8 ? y + 7 : y - 10.5;
+      const excludedText = point.excludedCount > 0
+        ? ` · 이상치 ${point.excludedCount}대 제외`
+        : '';
+      return {
+        circle: `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="rgba(20,20,28,0.95)" stroke="#FF7043" stroke-width="1.4">
+          <title>${point.year}년식 · 최근 1년 판매완료 평균 ${point.avgPrice.toLocaleString()}만원 · ${point.count}대${excludedText}</title>
+        </circle>`,
+        label: `<text x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" fill="#FF7043" stroke="rgba(20,20,28,0.95)" stroke-width="1.5" paint-order="stroke" text-anchor="middle" font-size="${soldPriceLabelSize}" font-weight="700">${label}</text>`
+      };
+    });
+    const soldPricePointsSvg = soldPricePointElements.map(element => element.circle).join('');
+    const soldPriceLabelsSvg = soldPricePointElements.map(element => element.label).join('');
+
+    // 선택옵션까지 포함한 신차가는 별도 점 없이 감가선의 가장 왼쪽 시작값으로 표시한다.
+    const newCarPriceSvg = newCarPrice ? (() => {
+      const y = calcPriceY(newCarPrice);
+      const labelY = Math.max(7, y - 3.5);
+      const priceLabel = compactPriceLabels
+        ? `${(newCarPrice / 1000).toFixed(1)}천`
+        : newCarPrice.toLocaleString();
+      return `<text x="${plotLeft}" y="${labelY.toFixed(1)}" fill="#CFD8DC" stroke="rgba(20,20,28,0.95)" stroke-width="1.8" paint-order="stroke" text-anchor="middle" font-size="${livePriceLabelSize}" font-weight="700"><title>신차가 ${newCarPrice.toLocaleString()}만원</title>${priceLabel}</text>
+        <text x="${plotLeft}" y="66" fill="#CFD8DC" text-anchor="middle" font-size="6.2" font-weight="700">신차가</text>`;
+    })() : '';
+
+    const soldPointsByAge = new Map(soldPoints.map(point => [point.age, point]));
+    const ageLabelsSvg = Array.from({ length: maxAge + 1 }, (_, age) => {
+      if (age % ageLabelStep !== 0 && age !== maxAge) return '';
+      const point = pointsByAge.get(age);
+      const soldPoint = soldPointsByAge.get(age);
+      const color = point || soldPoint ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.28)';
+      const calendarYear = point?.year || soldPoint?.year || currentCalendarYear - age;
+      const shortYear = String(calendarYear).slice(-2);
+      const x = calcAgeX(age).toFixed(1);
+      return `<text x="${x}" y="62" fill="${color}" text-anchor="middle" font-size="7">${age}년</text>
+        <text x="${x}" y="69" fill="${color}" text-anchor="middle" font-size="6.3">${shortYear}</text>`;
+    }).join('');
+
+    const fullCarYear = carYear > 0 ? 2000 + carYear : 0;
+    const currentCarAge = fullCarYear > 0 ? Math.max(0, new Date().getFullYear() - fullCarYear) : null;
+    const currentAgeMarker = currentCarAge !== null && currentCarAge <= maxAge
+      ? `<line x1="${calcAgeX(currentCarAge).toFixed(1)}" y1="${plotTop}" x2="${calcAgeX(currentCarAge).toFixed(1)}" y2="${baselineY}" stroke="rgba(76,175,80,0.8)" stroke-width="1" stroke-dasharray="2 2"/>
+         <text x="${calcAgeX(currentCarAge).toFixed(1)}" y="9" fill="#81C784" text-anchor="middle" font-size="6.2" font-weight="700">현재 차량</text>`
+      : '';
+
+    const middleCount = Math.round(maxCount / 2);
+    const middlePrice = Math.round((minPrice + maxPrice) / 2);
+    return `<div class="encar-year-market-chart">
+      <div class="encar-tooltip-divider"></div>
+      <div class="encar-year-chart-header">
+        <div class="encar-year-chart-title">연식별 가격·매물 분포</div>
+        <div class="encar-year-chart-legend">
+          <span><span class="encar-year-count-swatch"></span>매물수</span>
+          <span><span class="encar-year-price-swatch"></span>판매중</span>
+          ${soldPoints.length > 0 ? '<span><span class="encar-year-sold-price-swatch"></span>판매완료</span>' : ''}
+        </div>
+      </div>
+      <svg class="encar-year-chart-svg" viewBox="0 0 ${chartWidth} 87">
+        <line x1="${plotLeft}" y1="${plotTop}" x2="${plotRight}" y2="${plotTop}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+        <line x1="${plotLeft}" y1="${((plotTop + baselineY) / 2).toFixed(1)}" x2="${plotRight}" y2="${((plotTop + baselineY) / 2).toFixed(1)}" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="2 3"/>
+        <line x1="${plotLeft}" y1="${baselineY}" x2="${plotRight}" y2="${baselineY}" stroke="rgba(255,255,255,0.28)" stroke-width="1.2"/>
+
+        <text x="2" y="${plotTop + 2}" fill="rgba(100,181,246,0.8)" font-size="6.8">${maxCount}</text>
+        <text x="2" y="${((plotTop + baselineY) / 2 + 2).toFixed(1)}" fill="rgba(100,181,246,0.55)" font-size="6.8">${middleCount}</text>
+        <text x="2" y="${baselineY + 2}" fill="rgba(100,181,246,0.45)" font-size="6.8">0</text>
+
+        <text x="${priceAxisX}" y="${plotTop + 2}" fill="rgba(255,213,79,0.85)" text-anchor="end" font-size="6.8">${maxPrice.toLocaleString()}</text>
+        <text x="${priceAxisX}" y="${((plotTop + baselineY) / 2 + 2).toFixed(1)}" fill="rgba(255,213,79,0.6)" text-anchor="end" font-size="6.8">${middlePrice.toLocaleString()}</text>
+        <text x="${priceAxisX}" y="${baselineY + 2}" fill="rgba(255,213,79,0.45)" text-anchor="end" font-size="6.8">${minPrice.toLocaleString()}</text>
+
+        ${barsSvg}
+        ${currentAgeMarker}
+        <path d="${priceLinePath}" fill="none" stroke="#FFD54F" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${pricePointsSvg}
+        ${soldPoints.length > 0 ? `<path d="${soldPriceLinePath}" fill="none" stroke="#FF7043" stroke-width="1.5" stroke-dasharray="3 2" stroke-linejoin="round" stroke-linecap="round"/>
+        ${soldPricePointsSvg}` : ''}
+        ${newCarPriceSvg}
+        ${priceLabelsSvg}
+        ${soldPriceLabelsSvg}
+        ${ageLabelsSvg}
+        <text x="${chartCenter}" y="83" fill="rgba(255,255,255,0.45)" text-anchor="middle" font-size="6.3">출고 후 경과 연수 · 등록연식</text>
+      </svg>
+    </div>`;
+  }
+
   function createScoreBadge(scoreResult, cardData, weights, fullData = {}) {
     const w = weights || EncarScoring.DEFAULT_WEIGHTS;
     const carId = fullData.carId || cardData.carId || null;
@@ -172,7 +376,8 @@
     `;
 
     // ── 툴팁 상세 정보 계산 ──
-    const { originPrice = 0, price = 0, mileage = 0, year = 0,
+    const { actualCarId = null, soldOutCarType = 'for', powertrainCluster = null,
+            originPrice = 0, price = 0, mileage = 0, year = 0,
             insuranceCount = 0, isInsurancePrivate = false,
             myDamageCount = 0, myDamageAmount = 0,
             otherDamageCount = 0, otherDamageAmount = 0,
@@ -186,6 +391,8 @@
             dealerJoinedDatetime = null, dealerTotalSales = 0,
             dealerAvgScore = null, dealerName = '', dealerFirmName = '' } = fullData;
     const registedAgo = formatRelativeTime(firstAdvertisedDateTime);
+    const soldOutLookupId = actualCarId || carId;
+    const canAnalyzeSoldOut = Boolean(soldOutLookupId) && isDetailPage();
 
     // 사고/보험이력 건수 텍스트
     const accidentLines = [];
@@ -201,70 +408,312 @@
     }
     const accidentText = accidentLines.join('\n');
 
-    // 신차가 & 현재가 비율
-    const priceDetail = (originPrice > 0 && price > 0)
-      ? `신차가 ${originPrice.toLocaleString()}만원 · 현재 ${Math.round(price / originPrice * 100)}%`
-      : originPrice > 0
-        ? `신차가 ${originPrice.toLocaleString()}만원`
-        : '';
+    // 가격점수 기준: 현재 차량과 같은 출고연도의 평균가격
+    const yearlyPricePoint = EncarScoring.getYearlyPricePoint(fullData);
+    const yearlyPriceDeviation = yearlyPricePoint && price > 0
+      ? price / yearlyPricePoint.avgPrice - 1
+      : null;
+    const yearlyPriceAbsPct = yearlyPriceDeviation === null
+      ? null
+      : Math.round(Math.abs(yearlyPriceDeviation) * 100);
+    const yearlyPriceDiffText = yearlyPriceDeviation === null
+      ? '동일 연식 평균 데이터 부족'
+      : Math.abs(yearlyPriceDeviation) < 0.02
+        ? '동일 연식 평균 수준'
+        : yearlyPriceDeviation < 0
+          ? `동일 연식 평균보다 ${yearlyPriceAbsPct}% 저렴`
+          : `동일 연식 평균보다 ${yearlyPriceAbsPct}% 비쌈`;
+    const priceDetail = yearlyPricePoint
+      ? `연식평균 ${yearlyPricePoint.avgPrice.toLocaleString()}만원 · ${yearlyPriceDiffText.replace('동일 연식 ', '')}`
+      : price > 0 ? yearlyPriceDiffText : '';
 
     // 동급매물 시세 정보 (SVG 바)
     const market = fullData.marketPriceData;
     let marketDetail = '';
     if (market && market.median > 0 && price > 0) {
-      const deviation = price / market.median - 1;
-      const absPct = Math.round(Math.abs(deviation) * 100);
-      const pinColor = deviation <= -0.05 ? '#4CAF50'
-                     : deviation >= 0.15  ? '#F44336'
-                     : deviation >= 0.05  ? '#FF9800'
+      const pinColor = yearlyPriceDeviation === null ? '#9E9E9E'
+                     : yearlyPriceDeviation <= -0.05 ? '#4CAF50'
+                     : yearlyPriceDeviation >= 0.15  ? '#F44336'
+                     : yearlyPriceDeviation >= 0.05  ? '#FF9800'
                      : '#FFD700';
-      const diffText = Math.abs(deviation) < 0.02 ? '시세 평균 수준'
-                     : deviation < 0 ? `시세대비 ${absPct}% 저렴`
-                     : `시세대비 ${absPct}% 비쌈`;
+      const diffText = yearlyPriceDiffText;
 
-      // 신차가를 오른쪽 끝 기준으로 스케일 설정
-      const hasOrigin = originPrice > 0 && originPrice > market.median * 1.05;
-      let pricePct;
-      if (hasOrigin) {
-        // [2*median - originPrice ... median(center) ... originPrice(right)]
-        const leftBound = 2 * market.median - originPrice;
-        pricePct = Math.max(0, Math.min(100, (price - leftBound) / (originPrice - leftBound) * 100));
-      } else {
-        pricePct = Math.max(0, Math.min(100, (deviation / 0.3) * 50 + 50));
+      const rawItems = Array.isArray(market.items) && market.items.length > 0
+        ? market.items
+        : (Array.isArray(market.prices) ? market.prices.map(p => ({ price: p, grade: '일반' })) : []);
+
+      // 차량 판매가(price) 기준 약 5% 단위로 가격 구간(binStep) 설정
+      const carRefPrice = price > 0 ? price : (market.median || 2000);
+      const rawStep = carRefPrice * 0.05;
+      const binStep = rawStep < 30 ? 20 : (rawStep < 75 ? 50 : Math.max(50, Math.round(rawStep / 50) * 50));
+
+      // 매물 가격 목록 (현재 차량 가격 포함)
+      const allPrices = rawItems.map(it => it.price).filter(p => typeof p === 'number' && p > 0);
+      if (price > 0) allPrices.push(price);
+
+      const minP = Math.min(...allPrices);
+      const maxP = Math.max(...allPrices);
+
+      // 시작/종료 가격을 binStep 배수로 깔끔하게 정렬 (예: 1900~2000, 2000~2100...)
+      let startPrice = Math.floor(minP / binStep) * binStep;
+      let endPrice = Math.ceil(maxP / binStep) * binStep;
+      if (endPrice <= startPrice) endPrice = startPrice + binStep;
+
+      let numBins = Math.round((endPrice - startPrice) / binStep);
+      // 시각적 균형을 위해 최소 6개 구간 확보
+      while (numBins < 6) {
+        startPrice = Math.max(0, startPrice - binStep);
+        endPrice += binStep;
+        numBins = Math.round((endPrice - startPrice) / binStep);
+      }
+      // 구간이 너무 많을 경우(이상치 등) 최대 16구간으로 제한
+      if (numBins > 16) {
+        const sortedP = [...allPrices].sort((a, b) => a - b);
+        const p05 = sortedP[Math.floor(sortedP.length * 0.05)];
+        const p95 = sortedP[Math.floor(sortedP.length * 0.95)];
+        startPrice = Math.floor(Math.min(price, p05) / binStep) * binStep;
+        endPrice = Math.ceil(Math.max(price, p95) / binStep) * binStep;
+        if (endPrice <= startPrice) endPrice = startPrice + binStep * 6;
+        numBins = Math.round((endPrice - startPrice) / binStep);
       }
 
-      const priceXNum = 10 + (pricePct / 100) * 180;
+      // 이상치 때문에 표시 범위를 줄인 경우 범위 밖 매물을 양 끝 bin에 억지로 넣지 않는다.
+      const chartItems = rawItems.filter(item =>
+        typeof item.price === 'number' && item.price >= startPrice && item.price <= endPrice
+      );
+
+      // 가격을 X 좌표(10 ~ 190)로 변환하는 함수
+      const calcPriceX = (p) => {
+        const pct = (p - startPrice) / (endPrice - startPrice);
+        const clampedPct = Math.max(0, Math.min(1, pct));
+        return 10 + clampedPct * 180;
+      };
+
+      const priceXNum = calcPriceX(price);
       const priceX    = priceXNum.toFixed(1);
-      const fillLeft  = Math.min(priceXNum, 100).toFixed(1);
-      const fillWidth = Math.abs(priceXNum - 100).toFixed(1);
 
-      // 신차가 pin (오른쪽 끝 고정, 회색)
-      const originPinSvg = hasOrigin ? `
-          <line x1="190" y1="26" x2="190" y2="34" stroke="rgba(200,200,200,0.7)" stroke-width="1.5" stroke-linecap="round"/>
-          <circle cx="190" cy="20" r="6" fill="rgba(180,180,180,0.6)"/>` : '';
+      // 등급별 색상 팔레트
+      const GRADE_COLORS = [
+        '#64B5F6', // 하늘/파랑
+        '#4DB6AC', // 청록/민트
+        '#81C784', // 연초록
+        '#FFD54F', // 골드/노랑
+        '#FFB74D', // 주황
+        '#BA68C8', // 보라
+        '#F06292'  // 핑크
+      ];
 
-      // 라벨 오른쪽: 신차가 있으면 신차가, 없으면 "비쌈 →"
-      const rightLabel = hasOrigin ? `신차가 ${originPrice.toLocaleString()}만원` : '비쌈 →';
+      // 고유 등급 목록
+      const uniqueGrades = [...new Set(chartItems.map(it => it.grade || '일반').filter(Boolean))];
+      const gradeColorMap = {};
+      uniqueGrades.forEach((g, idx) => {
+        gradeColorMap[g] = GRADE_COLORS[idx % GRADE_COLORS.length];
+      });
+
+      // --- 2D 히스토그램 & 정규분포 곡선 데이터 계산 ---
+      const binWidth = 180 / numBins;
+      const barWidth = Math.max(4, binWidth - 2.5);
+      const baselineY = 47;
+      const maxBarHeight = 29; // 바 최대 높이
+
+      const bins = Array.from({ length: numBins }, (_, i) => {
+        const lo = startPrice + i * binStep;
+        const hi = lo + binStep;
+        return {
+          index: i,
+          rangeLabel: `${lo}~${hi}`,
+          startX: 10 + i * binWidth,
+          centerX: 10 + (i + 0.5) * binWidth,
+          items: []
+        };
+      });
+
+      chartItems.forEach(it => {
+        const binIdx = Math.min(numBins - 1, Math.max(0, Math.floor((it.price - startPrice) / binStep)));
+        bins[binIdx].items.push(it);
+      });
+
+      // 상세 조회가 끝난 매물의 점수를 가격 구간별로 평균낸다.
+      bins.forEach(bin => {
+        const scores = bin.items
+          .map(item => item.score)
+          .filter(score => Number.isFinite(score));
+        bin.scoredCount = scores.length;
+        bin.avgScore = scores.length > 0
+          ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
+          : null;
+      });
+
+      const maxBinCount = Math.max(1, ...bins.map(b => b.items.length));
+
+      // 히스토그램 바(Stacked Rects) 생성 (등급별 스택)
+      const histogramBarsSvg = bins.map(b => {
+        if (b.items.length === 0) return '';
+        const barX = (b.centerX - barWidth / 2).toFixed(1);
+        const sortedItems = [...b.items].sort((a, b) => {
+          const gA = a.grade || '';
+          const gB = b.grade || '';
+          return gA.localeCompare(gB);
+        });
+
+        let currentY = baselineY;
+        return sortedItems.map((it, idx) => {
+          const segHeight = (1 / maxBinCount) * maxBarHeight;
+          currentY -= segHeight;
+          const gKey = it.grade || '일반';
+          const col = gradeColorMap[gKey] || 'rgba(255,255,255,0.45)';
+          const isTop = idx === sortedItems.length - 1;
+          const rxAttr = isTop ? 'rx="2" ry="2"' : '';
+          const avgText = b.avgScore === null ? '' : ` · 평균 ${b.avgScore}점`;
+          return `<rect x="${barX}" y="${currentY.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${segHeight.toFixed(1)}" fill="${col}" opacity="0.85" ${rxAttr}><title>${b.rangeLabel}만원 (${b.items.length}대${avgText})</title></rect>`;
+        }).join('');
+      }).join('');
+
+      // 정규분포 느낌의 부드러운 곡선(Bell curve) 생성
+      const curvePoints = [
+        { x: 10, y: baselineY },
+        ...bins.map(b => {
+          const h = (b.items.length / maxBinCount) * maxBarHeight;
+          return { x: b.centerX, y: baselineY - h };
+        }),
+        { x: 190, y: baselineY }
+      ];
+
+      const getSplinePath = (pts) => {
+        if (pts.length < 2) return '';
+        let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const p0 = pts[i];
+          const p1 = pts[i + 1];
+          const mx = (p0.x + p1.x) / 2;
+          d += ` C ${mx.toFixed(1)} ${p0.y.toFixed(1)}, ${mx.toFixed(1)} ${p1.y.toFixed(1)}, ${p1.x.toFixed(1)} ${p1.y.toFixed(1)}`;
+        }
+        return d;
+      };
+
+      const linePath = getSplinePath(curvePoints);
+      const areaPath = `${linePath} L 190 ${baselineY} L 10 ${baselineY} Z`;
+
+      // 구간 평균점수(0~100)는 히스토그램 위에 선/점/숫자로 표시한다.
+      // 빈 가격 구간을 가로질러 선이 연결되지 않도록 인접한 점끼리만 잇는다.
+      const scoreTopY = 10;
+      const scoreBottomY = baselineY - 2;
+      const calcScoreY = score => scoreBottomY - (score / 100) * (scoreBottomY - scoreTopY);
+      let previousScorePoint = null;
+      const scoreLineParts = [];
+      const scorePointParts = [];
+
+      bins.forEach(bin => {
+        if (bin.avgScore === null) {
+          previousScorePoint = null;
+          return;
+        }
+
+        const point = { x: bin.centerX, y: calcScoreY(bin.avgScore) };
+        if (previousScorePoint) {
+          scoreLineParts.push(
+            `<line x1="${previousScorePoint.x.toFixed(1)}" y1="${previousScorePoint.y.toFixed(1)}" x2="${point.x.toFixed(1)}" y2="${point.y.toFixed(1)}" stroke="rgba(255,255,255,0.9)" stroke-width="1.2" stroke-linecap="round"/>`
+          );
+        }
+
+        const scoreGrade = EncarScoring.getGrade(bin.avgScore);
+        const scoreColor = EncarScoring.getGradeColor(scoreGrade);
+        const labelY = Math.max(7, point.y - 3.5);
+        scorePointParts.push(`
+          <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.6" fill="${scoreColor}" stroke="#fff" stroke-width="0.8">
+            <title>${bin.rangeLabel}만원 평균 ${bin.avgScore}점 (${bin.scoredCount}대 분석)</title>
+          </circle>
+          <text x="${point.x.toFixed(1)}" y="${labelY.toFixed(1)}" fill="${scoreColor}" stroke="rgba(20,20,28,0.9)" stroke-width="1.4" paint-order="stroke" text-anchor="middle" font-size="6.5" font-weight="700">${bin.avgScore}</text>`);
+        previousScorePoint = point;
+      });
+
+      const averageScoreSvg = `${scoreLineParts.join('')}${scorePointParts.join('')}`;
+      // 신차가 pin (구간 범위 내에 있을 때만 표시)
+      const hasOriginInScale = originPrice > 0 && originPrice >= startPrice && originPrice <= endPrice;
+      const originPinSvg = hasOriginInScale ? `
+          <line x1="${calcPriceX(originPrice).toFixed(1)}" y1="12" x2="${calcPriceX(originPrice).toFixed(1)}" y2="${baselineY}" stroke="rgba(200,200,200,0.5)" stroke-width="1.2" stroke-dasharray="2 2"/>
+          <circle cx="${calcPriceX(originPrice).toFixed(1)}" cy="${baselineY}" r="2.5" fill="rgba(180,180,180,0.6)"/>` : '';
+
+      // 중앙값 (Median) 점선
+      const medianXNum = calcPriceX(market.median);
+      const medianX    = medianXNum.toFixed(1);
+      const medianIndicatorSvg = `
+          <line x1="${medianX}" y1="12" x2="${medianX}" y2="${baselineY}" stroke="rgba(255,255,255,0.4)" stroke-width="1.2" stroke-dasharray="2 2"/>
+          <circle cx="${medianX}" cy="${baselineY}" r="2" fill="rgba(255,255,255,0.7)"/>`;
+
+      // 현재 매물 가격 위치 인디케이터
+      const currentIndicatorSvg = `
+          <line x1="${priceX}" y1="8" x2="${priceX}" y2="${baselineY}" stroke="${pinColor}" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="${priceX}" cy="6" r="4.5" fill="${pinColor}"/>
+          <circle cx="${priceX}" cy="6" r="2" fill="#fff" opacity="0.7"/>
+          <circle cx="${priceX}" cy="${baselineY}" r="3" fill="${pinColor}"/>`;
 
       marketDetail = `<div class="encar-price-meter">
-        <svg class="encar-price-svg" viewBox="0 0 200 42">
-          <line x1="10" y1="34" x2="190" y2="34" stroke="rgba(255,255,255,0.12)" stroke-width="2" stroke-linecap="round"/>
-          <rect x="${fillLeft}" y="33" width="${fillWidth}" height="2" fill="${pinColor}" opacity="0.5" rx="1"/>
+        <div class="encar-price-axis-title">
+          <span>막대: 매물수</span>
+          <span class="encar-price-score-legend"><span class="encar-price-score-dot"></span>평균점수(0~100)</span>
+        </div>
+        <svg class="encar-price-svg" viewBox="0 0 200 55">
+          <defs>
+            <linearGradient id="bellAreaGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(144, 202, 249, 0.4)" />
+              <stop offset="100%" stop-color="rgba(144, 202, 249, 0.03)" />
+            </linearGradient>
+          </defs>
+          <line x1="10" y1="18" x2="190" y2="18" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2 4"/>
+          <line x1="10" y1="32" x2="190" y2="32" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2 4"/>
+
+          <!-- 정규분포 부드러운 배경 영역 & 곡선 -->
+          <path d="${areaPath}" fill="url(#bellAreaGrad)" />
+          <path d="${linePath}" fill="none" stroke="rgba(144, 202, 249, 0.55)" stroke-width="1.5" stroke-linecap="round"/>
+
+          <!-- 히스토그램 바 (등급별 스택) -->
+          ${histogramBarsSvg}
+
+          <!-- 가격 구간별 평균점수 -->
+          ${averageScoreSvg}
+
+          <!-- X축 기준선 -->
+          <line x1="10" y1="${baselineY}" x2="190" y2="${baselineY}" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" stroke-linecap="round"/>
+
+          <!-- 신차가 및 중앙값 가이드라인 -->
           ${originPinSvg}
-          <line x1="100" y1="27" x2="100" y2="34" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-linecap="round"/>
-          <circle cx="100" cy="21" r="6" fill="rgba(255,255,255,0.35)"/>
-          <line x1="${priceX}" y1="24" x2="${priceX}" y2="34" stroke="${pinColor}" stroke-width="2" stroke-linecap="round"/>
-          <circle cx="${priceX}" cy="15" r="8" fill="${pinColor}" opacity="0.9"/>
-          <circle cx="${(priceXNum - 3).toFixed(1)}" cy="11" r="3" fill="white" opacity="0.25"/>
+          ${medianIndicatorSvg}
+
+          <!-- 현재 매물 가격 위치 핀 -->
+          ${currentIndicatorSvg}
         </svg>
         <div class="encar-price-meter-labels">
-          <span>← 저렴</span>
-          <span>${market.median.toLocaleString()}만원 (${market.count}대)</span>
-          <span>${rightLabel}</span>
+          <span>${startPrice.toLocaleString()}만</span>
+          <span>중앙값 ${market.median.toLocaleString()}만원 · ${binStep}만 단위</span>
+          <span>${endPrice.toLocaleString()}만</span>
         </div>
         <div class="encar-price-diff-text" style="color:${pinColor}">${diffText}</div>
       </div>`;
     }
+    const yearlyMarketDetail = createYearlyMarketChart(fullData.yearlyMarketData, year, originPrice);
+    const liveYearPoints = (fullData.yearlyMarketData?.points || [])
+      .filter(point => Number.isInteger(point.age) && Number.isFinite(point.avgPrice));
+    const maxMarketAge = liveYearPoints.length > 0
+      ? Math.max(...liveYearPoints.map(point => point.age))
+      : null;
+    const referencePriceByYear = new Map(
+      liveYearPoints.map(point => [Number(point.year), Number(point.avgPrice) || 0])
+    );
+    const selectedCalendarYear = year > 0 ? 2000 + year : 0;
+    const currentCalendarYear = new Date().getFullYear();
+    const soldOutYearReferences = maxMarketAge !== null
+      ? Array.from({ length: maxMarketAge + 1 }, (_, age) => {
+          const calendarYear = currentCalendarYear - age;
+          return {
+            year: calendarYear,
+            referencePrice: referencePriceByYear.get(calendarYear) ||
+              (calendarYear === selectedCalendarYear ? price : 0)
+          };
+        })
+      : selectedCalendarYear > 0
+        ? [{ year: selectedCalendarYear, referencePrice: price }]
+        : [];
 
     // 연간 평균 주행거리 (출고년월 기준 월단위 계산)
     const { month: registMonth = 0 } = fullData;
@@ -294,8 +743,10 @@
     const tooltip = document.createElement('div');
     tooltip.className = 'encar-score-tooltip';
     tooltip.innerHTML = `
-      <div class="encar-tooltip-title">${apiModelName || cardData.modelName}</div>
-      ${registedAgo ? `<div class="encar-tooltip-registed">${registedAgo} 등록</div>` : ''}
+      <div class="encar-tooltip-heading">
+        <div class="encar-tooltip-title">${apiModelName || cardData.modelName}</div>
+        ${registedAgo ? `<div class="encar-tooltip-registed">${registedAgo} 등록</div>` : ''}
+      </div>
       <div class="encar-tooltip-total">종합점수: <strong>${scoreResult.total}점</strong> (${scoreResult.grade}등급)</div>
       ${scoreResult.penalty ? `<div style="color:#ff5252; font-size:12px; margin-top:4px;">⚠️ 미공개 항목 페널티 (-40점)</div>` : ''}
       <div class="encar-tooltip-divider"></div>
@@ -314,7 +765,13 @@
         <span>${Math.round(scoreResult.breakdown.price)}/${w.price}</span>
       </div>
       ${priceDetail ? `<div class="encar-tooltip-detail">${priceDetail}</div>` : ''}
+      ${canAnalyzeSoldOut ? `<div class="encar-tooltip-detail encar-sold-price-detail">
+        <span>최근 1년 판매완료 평균가</span>
+        <strong data-encar-sold-average>조회 대기</strong>
+        <span data-encar-sold-count></span>
+      </div>` : ''}
       ${marketDetail}
+      ${yearlyMarketDetail}
       <div class="encar-tooltip-row">
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>
@@ -355,15 +812,12 @@
     let priceStr = price > 0 ? `${price.toLocaleString()}만원` : '정보없음';
     if (originPrice > 0) priceStr += ` (신차가 ${originPrice.toLocaleString()}만원)`;
 
-    // 시세 텍스트
+    // 가격점수에 사용한 동일 연식 평균가격 텍스트
     let marketStr = '';
-    if (market && market.median > 0 && price > 0) {
-      const mDeviation = price / market.median - 1;
-      const mAbsPct = Math.round(Math.abs(mDeviation) * 100);
-      const mDiffText = Math.abs(mDeviation) < 0.02 ? '시세 평균 수준'
-        : mDeviation < 0 ? `시세대비 ${mAbsPct}% 저렴`
-        : `시세대비 ${mAbsPct}% 비쌈`;
-      marketStr = `${mDiffText} (동급 ${market.count}대 중간값 ${market.median.toLocaleString()}만원)`;
+    if (yearlyPricePoint && price > 0) {
+      marketStr = `${yearlyPriceDiffText} (연식평균 ${yearlyPricePoint.avgPrice.toLocaleString()}만원)`;
+    } else if (price > 0) {
+      marketStr = yearlyPriceDiffText;
     }
 
     // 보험이력 (비공개·내차피해·타차가해·제공불가기간 포함)
@@ -491,12 +945,8 @@
       }
     }
 
-    // 툴팁이 잘리는 현상(overflow: hidden)을 방지하기 위해 body에 직접 삽입하여 fixed 좌표로 렌더링
-    badge.addEventListener('mouseenter', () => {
-      document.body.appendChild(tooltip);
-      tooltip.style.visibility = 'hidden';
-      tooltip.style.display = 'block';
-
+    const positionTooltip = () => {
+      if (!tooltip.isConnected) return;
       const rect = badge.getBoundingClientRect();
       const tooltipHeight = tooltip.offsetHeight;
       const tooltipWidth = tooltip.offsetWidth;
@@ -521,6 +971,66 @@
       tooltip.style.right = 'auto';
       tooltip.style.bottom = 'auto';
       tooltip.style.visibility = 'visible';
+    };
+
+    let soldOutPriceLoadStarted = false;
+    const loadSoldOutPrice = async () => {
+      if (soldOutPriceLoadStarted || !canAnalyzeSoldOut) return;
+      soldOutPriceLoadStarted = true;
+
+      const averageEl = tooltip.querySelector('[data-encar-sold-average]');
+      const countEl = tooltip.querySelector('[data-encar-sold-count]');
+      if (!averageEl || !countEl) return;
+      averageEl.textContent = '조회 중…';
+
+      const soldYearlyData = await DetailParser.fetchSoldOutYearlyData(
+        soldOutLookupId,
+        soldOutYearReferences,
+        {
+          carType: soldOutCarType,
+          // 30e처럼 파워트레인 클러스터를 쓰는 차트는 판매완료 데이터도 하위 트림을 합친다.
+          broadenTrim: Boolean(powertrainCluster)
+        }
+      );
+      const selectedSoldPoint = soldYearlyData?.points?.find(
+        point => Number(point.year) === selectedCalendarYear
+      );
+
+      if (selectedSoldPoint?.average > 0 && selectedSoldPoint.count > 0) {
+        averageEl.textContent = `${selectedSoldPoint.average.toLocaleString()}만원`;
+        const notes = [`${selectedSoldPoint.count}대`];
+        if (selectedSoldPoint.excludedCount > 0) notes.push(`이상치 ${selectedSoldPoint.excludedCount}대 제외`);
+        if (selectedSoldPoint.truncated) notes.push('최대 400대 기준');
+        countEl.textContent = `(${notes.join(' · ')})`;
+        console.log(`[EncarScore] ${selectedCalendarYear}년식 최근 1년 판매완료 평균가: ${selectedSoldPoint.average}만원 (${selectedSoldPoint.count}대)`);
+      } else {
+        averageEl.textContent = '데이터 없음';
+        countEl.textContent = '';
+      }
+
+      if (soldYearlyData?.points?.length > 0) {
+        const updatedChartHtml = createYearlyMarketChart(
+          fullData.yearlyMarketData,
+          year,
+          originPrice,
+          soldYearlyData
+        );
+        const holder = document.createElement('div');
+        holder.innerHTML = updatedChartHtml.trim();
+        const currentChart = tooltip.querySelector('.encar-year-market-chart');
+        const updatedChart = holder.firstElementChild;
+        if (currentChart && updatedChart) currentChart.replaceWith(updatedChart);
+      }
+      requestAnimationFrame(positionTooltip);
+    };
+
+    // 툴팁이 잘리는 현상(overflow: hidden)을 방지하기 위해 body에 직접 삽입하여 fixed 좌표로 렌더링
+    badge.addEventListener('mouseenter', () => {
+      document.body.appendChild(tooltip);
+      tooltip.style.visibility = 'hidden';
+      tooltip.style.display = 'block';
+      positionTooltip();
+      void loadSoldOutPrice();
     });
 
     badge.addEventListener('mouseleave', () => {
@@ -646,6 +1156,43 @@
     fetchAndShow();
   }
 
+  /**
+   * 기본 배지는 즉시 표시하고, 비교 매물 점수는 백그라운드에서 채운 뒤
+   * 같은 위치의 배지를 새 차트로 교체한다.
+   */
+  async function enrichBadgeWithMarketScores(badge, scoreResult, cardData, weights, fullData, config) {
+    const market = fullData.marketPriceData;
+    if (!market?.items?.length || market.scoresLoaded) return;
+
+    try {
+      const scoredMarket = await DetailParser.scoreMarketItems(
+        market,
+        weights,
+        config,
+        {
+          carId: fullData.carId,
+          score: scoreResult.total,
+          yearlyMarketData: fullData.yearlyMarketData
+        }
+      );
+      if (!badge.isConnected) return;
+
+      const updatedBadge = createScoreBadge(
+        scoreResult,
+        cardData,
+        weights,
+        { ...fullData, marketPriceData: scoredMarket }
+      );
+
+      // 상세 페이지의 fixed 위치 등 기존 인라인 스타일을 그대로 유지한다.
+      updatedBadge.style.cssText = badge.style.cssText;
+      badge.dispatchEvent(new Event('mouseleave'));
+      badge.replaceWith(updatedBadge);
+    } catch (error) {
+      console.warn('[EncarScore] 가격 구간 평균점수 계산 실패:', error);
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // 5. 카드 처리 & 페이지 로직
   // ═══════════════════════════════════════════════════════════════
@@ -692,17 +1239,24 @@
       // 기본 + 상세 데이터 합치기
       const fullData = { ...cardData, ...detailData };
 
-      // 사용자 가중치 & 설정 불러오기
+      // 사용자 가중치 불러오기
       const weights = await getStoredWeights();
-      const priceMode = await getStoredPriceMode();
 
       // 점수 계산
-      const scoreResult = EncarScoring.calculateScore(fullData, weights, { priceMode });
+      const scoreResult = EncarScoring.calculateScore(fullData, weights);
 
       // 로딩 배지 제거 → 점수 배지 표시
       loadingBadge.remove();
       const scoreBadge = createScoreBadge(scoreResult, cardData, weights, fullData);
       parentEl.appendChild(scoreBadge);
+      enrichBadgeWithMarketScores(
+        scoreBadge,
+        scoreResult,
+        cardData,
+        weights,
+        fullData,
+        {}
+      );
 
       // 점수를 컨테이너에 저장 (필터링에 사용)
       parentEl.dataset.encarScore = scoreResult.total;
@@ -746,13 +1300,20 @@
 
       const fullData = { carId, modelName, ...detailData };
       const weights = await getStoredWeights();
-      const priceMode = await getStoredPriceMode();
-      const scoreResult = EncarScoring.calculateScore(fullData, weights, { priceMode });
+      const scoreResult = EncarScoring.calculateScore(fullData, weights);
 
       loadingBadge.remove();
       const scoreBadge = createScoreBadge(scoreResult, { modelName }, weights, fullData);
       scoreBadge.style.cssText += '; position: fixed !important; bottom: 24px; right: 24px; width: 72px; height: 72px; z-index: 99999;';
       document.body.appendChild(scoreBadge);
+      enrichBadgeWithMarketScores(
+        scoreBadge,
+        scoreResult,
+        { modelName },
+        weights,
+        fullData,
+        {}
+      );
 
       console.log(`[EncarScore] 상세페이지 ${carId}: ${scoreResult.total}점 (${scoreResult.grade})`, scoreResult.breakdown);
     } catch (error) {
