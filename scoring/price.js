@@ -1,8 +1,8 @@
 /**
  * 가격 점수 (price 만점)
  *
- * 동급매물 5대 이상 확보 시: 시세 중앙값 대비 비율로 산정
- * 5대 미만(데이터 부족) 시: 신차가 대비 감가율로 산정
+ * 동일 모델·트림의 같은 출고연도 평균가격 대비 비율로 산정한다.
+ * 평균가격 데이터가 없으면 가격 항목 배점의 50%를 부여한다.
  */
 ((ns) => {
   /**
@@ -21,38 +21,39 @@
     return maxPoints * 0.1;
   }
 
-  ns.scorePrice = function (data, maxPoints, config = {}) {
-    const { price = 0, year = 0, originPrice = 0, marketPriceData = null } = data;
+  function getFullYear(year) {
+    const parsed = parseInt(year, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return parsed < 100 ? 2000 + parsed : parsed;
+  }
 
-    // ── 절대가격 모드 (가격우선 프리셋) ──
-    if (config.priceMode === 'absolute') {
-      if (!price) return maxPoints * 0.5;
-      if (price <= 1000) return maxPoints;
-      if (price <= 1500) return maxPoints * 0.9;
-      if (price <= 2000) return maxPoints * 0.8;
-      if (price <= 2500) return maxPoints * 0.7;
-      if (price <= 3000) return maxPoints * 0.6;
-      if (price <= 4000) return maxPoints * 0.45;
-      if (price <= 5000) return maxPoints * 0.3;
-      if (price <= 7000) return maxPoints * 0.2;
-      return maxPoints * 0.1;
-    }
+  /**
+   * 현재 차량과 출고연도가 같은 연식별 시세 포인트를 찾는다.
+   * year를 우선 사용하여 실행 연도가 바뀌어도 잘못된 age 포인트와 매칭되지 않게 한다.
+   */
+  function getYearlyPricePoint(data) {
+    const fullYear = getFullYear(data?.year);
+    const points = data?.yearlyMarketData?.points;
+    if (!fullYear || !Array.isArray(points)) return null;
 
-    // ── 상대가격 모드 (기본) ──
+    const currentYear = new Date().getFullYear();
+    const carAge = Math.max(0, currentYear - fullYear);
+    const point = points.find(item => Number(item.year) === fullYear)
+      || points.find(item => Number(item.age) === carAge);
+
+    if (!point || !Number.isFinite(point.avgPrice) || point.avgPrice <= 0) return null;
+    return point;
+  }
+
+  ns.getYearlyPricePoint = getYearlyPricePoint;
+
+  ns.scorePrice = function (data, maxPoints) {
+    const price = data?.price ?? 0;
     if (!price) return maxPoints * 0.5;
 
-    // A) 동급매물 시세 기반
-    if (marketPriceData && marketPriceData.median > 0 && marketPriceData.count >= 5) {
-      return ratioToScore(price / marketPriceData.median, maxPoints);
-    }
-
-    // B) 신차가 대비 감가율 (시세 데이터 부족 시 fallback)
-    if (originPrice > 0 && year > 0) {
-      const currentYear = new Date().getFullYear();
-      const carAge = Math.max(1, currentYear - (2000 + year));
-      const RETENTION = [1.0, 0.85, 0.75, 0.66, 0.58, 0.52, 0.46, 0.41, 0.37, 0.33, 0.30];
-      const expectedPrice = originPrice * RETENTION[Math.min(carAge, 10)];
-      return ratioToScore(price / expectedPrice, maxPoints);
+    const yearlyPoint = getYearlyPricePoint(data);
+    if (yearlyPoint) {
+      return ratioToScore(price / yearlyPoint.avgPrice, maxPoints);
     }
 
     return maxPoints * 0.5;
