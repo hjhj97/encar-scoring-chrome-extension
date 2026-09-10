@@ -171,6 +171,26 @@
       .map(item => ({ ...item, time: parseDate(item.date) }))
       .filter(item => item.time !== null && item.time >= start && item.time <= end)
       .sort((a, b) => a.time - b.time);
+    const unavailableRanges = (Array.isArray(data.unavailablePeriods) ? data.unavailablePeriods : [])
+      .map(value => {
+        const match = String(value || '').trim().match(
+          /^(\d{4})[-/.]?(\d{2})(?:[-/.]?\d{2})?\s*[~～]\s*(\d{4})[-/.]?(\d{2})(?:[-/.]?\d{2})?$/
+        );
+        if (!match) return null;
+        const [, fromYearText, fromMonthText, toYearText, toMonthText] = match;
+        const fromYear = Number(fromYearText), fromMonth = Number(fromMonthText);
+        const toYear = Number(toYearText), toMonth = Number(toMonthText);
+        if (fromMonth < 1 || fromMonth > 12 || toMonth < 1 || toMonth > 12) return null;
+        const rangeStart = new Date(fromYear, fromMonth - 1, 1).getTime();
+        const rangeEnd = new Date(toYear, toMonth, 1).getTime();
+        if (rangeStart >= rangeEnd) return null;
+        return {
+          start: rangeStart,
+          end: rangeEnd,
+          label: `${fromYearText}.${fromMonthText}~${toYearText}.${toMonthText}`
+        };
+      })
+      .filter(Boolean);
     const missing = dates.length < Number(data.ownerChangeCount || 0);
     const insuranceMissing = insurance.length < Math.max(history.length, Number(data.insuranceCount) || 0);
     const today = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}.${String(now.getDate()).padStart(2, '0')}`;
@@ -195,16 +215,27 @@
           : '금액 미제공';
         return { ...item, x, amount };
       });
+      const unavailable = unavailableRanges.map(range => {
+        const overlapStart = Math.max(boundary.time, range.start);
+        const overlapEnd = Math.min(until.time, range.end);
+        return overlapStart < overlapEnd
+          ? { ...range, x1: calcX(overlapStart), x2: calcX(overlapEnd) }
+          : null;
+      }).filter(Boolean);
       const y = 12;
-      return { index, y, x1: calcX(boundary.time), x2: calcX(until.time), boundary, until, last, marks };
+      return { index, y, x1: calcX(boundary.time), x2: calcX(until.time), boundary, until, last, marks, unavailable };
     });
     const steps = rows.map(row => {
       const color = colors[Math.min(row.index, 7)];
+      const unavailableSegments = row.unavailable.map(range =>
+        `<line data-unavailable-period="${range.label}" x1="${range.x1.toFixed(1)}" y1="${row.y}" x2="${range.x2.toFixed(1)}" y2="${row.y}" stroke="#757575" stroke-width="6"><title>정보제공 불가기간 ${range.label}</title></line>`
+      ).join('');
       const pins = row.marks.map(item => `<circle cx="${item.x.toFixed(1)}" cy="${row.y}" r="3" fill="#64B5F6" stroke="#fff" stroke-width="1"/>`).join('');
       return `<g data-owner-period="${row.index}">
         <text x="12" y="${row.y + 4}" text-anchor="middle">${row.index + 1}</text>
         <line x1="${row.x1.toFixed(1)}" y1="${row.y}" x2="${row.x2.toFixed(1)}" y2="${row.y}" stroke="#90a4ae" stroke-width="8"/>
         <line x1="${row.x1.toFixed(1)}" y1="${row.y}" x2="${row.x2.toFixed(1)}" y2="${row.y}" stroke="${color}" stroke-width="6"/>
+        ${unavailableSegments}
         <circle cx="${row.x1.toFixed(1)}" cy="${row.y}" r="4" fill="${color}" stroke="#cfd8dc"/>
         <circle cx="${row.x2.toFixed(1)}" cy="${row.y}" r="3" fill="${color}" stroke="#cfd8dc"/>
         ${pins}
@@ -233,7 +264,7 @@
       </div>`;
     }).join('');
     return `<div class="encar-owner-timeline">
-      <div class="encar-tooltip-detail">소유 기간별 보험이력 · 지급금(만원)</div>
+      <div class="encar-tooltip-detail">소유 기간별 보험이력 · 지급금(만원)${unavailableRanges.length ? ' · 회색: 정보제공 불가' : ''}</div>
       ${details}
       ${missing ? '<div class="encar-tooltip-detail">일부 변경일 누락 · 소유 기간 구분이 불완전할 수 있음</div>' : ''}
       ${insuranceMissing ? '<div class="encar-tooltip-detail">일부 보험이력 일자 정보 없음</div>' : ''}
