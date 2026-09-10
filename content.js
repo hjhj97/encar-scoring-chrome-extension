@@ -201,6 +201,10 @@
     ];
     const colors = ['#4CAF50', '#CDDC39', '#FF9800', '#F44336', '#B73229', '#7A221B', '#3D110E', '#000000'];
     const calcX = time => 34 + (time - start) / (end - start) * 344;
+    const parsedOriginPrice = Number(data.originPrice);
+    const originPriceWon = Number.isFinite(parsedOriginPrice) && parsedOriginPrice > 0
+      ? parsedOriginPrice * 10000
+      : null;
     const rows = boundaries.slice(0, -1).map((boundary, index) => {
       const until = boundaries[index + 1];
       const last = index === boundaries.length - 2;
@@ -210,10 +214,19 @@
       );
       const marks = events.map(item => {
         const x = calcX(item.time);
-        const amount = Number.isFinite(item.amount) && item.amount >= 0
-          ? `${(item.amount / 10000).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}만원`
+        const insuranceAmountWon = Number.isFinite(item.amount) && item.amount >= 0 ? item.amount : null;
+        const laborCostWon = Number.isFinite(item.laborCost) && item.laborCost >= 0 ? item.laborCost : null;
+        const amount = insuranceAmountWon !== null
+          ? `${(insuranceAmountWon / 10000).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}만원`
           : '금액 미제공';
-        return { ...item, x, amount };
+        const laborAmount = laborCostWon !== null
+          ? `${(laborCostWon / 10000).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}만원`
+          : '미제공';
+        const isMajorAccident = originPriceWon !== null && (
+          (insuranceAmountWon !== null && insuranceAmountWon * 100 >= originPriceWon * 15) ||
+          (laborCostWon !== null && laborCostWon * 100 >= originPriceWon * 7)
+        );
+        return { ...item, x, amount, laborAmount, isMajorAccident };
       });
       const unavailable = unavailableRanges.map(range => {
         const overlapStart = Math.max(boundary.time, range.start);
@@ -225,12 +238,25 @@
       const y = 12;
       return { index, y, x1: calcX(boundary.time), x2: calcX(until.time), boundary, until, last, marks, unavailable };
     });
+    const createStarPoints = (centerX, centerY, outerRadius = 5, innerRadius = 2.3) =>
+      Array.from({ length: 10 }, (_, index) => {
+        const radius = index % 2 === 0 ? outerRadius : innerRadius;
+        const angle = -Math.PI / 2 + index * Math.PI / 5;
+        return `${(centerX + Math.cos(angle) * radius).toFixed(1)},${(centerY + Math.sin(angle) * radius).toFixed(1)}`;
+      }).join(' ');
     const steps = rows.map(row => {
       const color = colors[Math.min(row.index, 7)];
       const unavailableSegments = row.unavailable.map(range =>
         `<line data-unavailable-period="${range.label}" x1="${range.x1.toFixed(1)}" y1="${row.y}" x2="${range.x2.toFixed(1)}" y2="${row.y}" stroke="#757575" stroke-width="6"><title>정보제공 불가기간 ${range.label}</title></line>`
       ).join('');
-      const pins = row.marks.map(item => `<circle cx="${item.x.toFixed(1)}" cy="${row.y}" r="3" fill="#64B5F6" stroke="#fff" stroke-width="1"/>`).join('');
+      const pins = row.marks.map(item => {
+        const outerRadius = item.isMajorAccident ? 11 : 5;
+        const innerRadius = item.isMajorAccident ? 5 : 2.3;
+        const severity = item.isMajorAccident ? '큰 사고' : '작은 사고';
+        const fill = item.isMajorAccident ? '#FF3B30' : '#FFC107';
+        const strokeWidth = item.isMajorAccident ? 1.3 : 0.9;
+        return `<polygon data-accident-date="${item.date}" data-accident-severity="${item.isMajorAccident ? 'major' : 'minor'}" points="${createStarPoints(item.x, row.y, outerRadius, innerRadius)}" fill="${fill}" stroke="#fff" stroke-width="${strokeWidth}" stroke-linejoin="round"><title>${severity} · 보험이력 ${item.date} · 보험지급금 ${item.amount} · 공임비 ${item.laborAmount}</title></polygon>`;
+      }).join('');
       return `<g data-owner-period="${row.index}">
         <text x="12" y="${row.y + 4}" text-anchor="middle">${row.index + 1}</text>
         <line x1="${row.x1.toFixed(1)}" y1="${row.y}" x2="${row.x2.toFixed(1)}" y2="${row.y}" stroke="#90a4ae" stroke-width="8"/>
@@ -264,7 +290,7 @@
       </div>`;
     }).join('');
     return `<div class="encar-owner-timeline">
-      <div class="encar-tooltip-detail">소유 기간별 보험이력 · 지급금(만원)${unavailableRanges.length ? ' · 회색: 정보제공 불가' : ''}</div>
+      <div class="encar-tooltip-detail">★ 보험이력 · 큰 사고는 큰 빨간 별표 · 지급금(만원)${unavailableRanges.length ? ' · 회색: 정보제공 불가' : ''}</div>
       ${details}
       ${missing ? '<div class="encar-tooltip-detail">일부 변경일 누락 · 소유 기간 구분이 불완전할 수 있음</div>' : ''}
       ${insuranceMissing ? '<div class="encar-tooltip-detail">일부 보험이력 일자 정보 없음</div>' : ''}

@@ -334,7 +334,9 @@ const DetailParser = (() => {
       ? data.accidents.filter(item => item && typeof item.date === 'string').map(item => ({
           date: item.date,
           amount: typeof item.insuranceBenefit === 'number' && Number.isFinite(item.insuranceBenefit) && item.insuranceBenefit >= 0
-            ? item.insuranceBenefit : null
+            ? item.insuranceBenefit : null,
+          laborCost: typeof item.laborCost === 'number' && Number.isFinite(item.laborCost) && item.laborCost >= 0
+            ? item.laborCost : null
         })) : [];
 
     // 개별 보험처리 건당 유효금액 = max(보험지급금, 실제수리비합계)
