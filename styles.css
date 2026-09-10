@@ -88,7 +88,9 @@
 .encar-score-tooltip {
   display: none;
   position: fixed;
-  pointer-events: none;
+  pointer-events: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   width: 420px;
   max-width: calc(100vw - 24px);
   box-sizing: border-box;
@@ -104,6 +106,25 @@
   white-space: nowrap;
   z-index: 1000000;
   animation: encar-tooltip-show 0.2s ease forwards;
+}
+
+.encar-score-tooltip.encar-tooltip-wide {
+  display: grid !important;
+  grid-template-columns: minmax(0, 390px) minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  width: 820px;
+}
+
+.encar-tooltip-main,
+.encar-tooltip-owner-section {
+  min-width: 0;
+}
+
+.encar-tooltip-wide > .encar-tooltip-owner-section {
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+  padding-left: 14px;
+  white-space: normal;
 }
 
 @keyframes encar-tooltip-show {
@@ -200,6 +221,64 @@
 .encar-sold-price-detail [data-encar-sold-count] {
   color: #78909c;
   font-size: 10px;
+}
+
+.encar-owner-timeline {
+  margin: 2px 0 8px;
+  white-space: normal;
+}
+
+.encar-owner-timeline svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.encar-owner-summary {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #aaa;
+  overflow-wrap: anywhere;
+}
+
+.encar-owner-period-block + .encar-owner-period-block {
+  margin-top: 6px;
+}
+
+.encar-owner-period-block .encar-owner-summary {
+  margin-top: 0;
+}
+
+.encar-owner-summary-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.encar-owner-period-number {
+  color: #cfd8dc;
+  font-weight: 700;
+  text-align: center;
+}
+
+.encar-owner-insurance-list {
+  color: #90caf9;
+}
+
+.encar-owner-timeline text {
+  fill: #cfd8dc;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke;
+  stroke: #202028;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.encar-tooltip-owner-section .encar-tooltip-detail {
+  font-size: 12px;
 }
 
 /* ---- 액션 메뉴 (배지 클릭 시) ---- */

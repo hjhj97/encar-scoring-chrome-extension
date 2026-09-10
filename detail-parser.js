@@ -310,6 +310,9 @@ const DetailParser = (() => {
         isAccidentFree: false, // 데이터를 알 수 없으므로 무사고 아님
         isInsurancePrivate,
         ownerChangeCount: 0,
+        ownerChanges: [],
+        firstRegistrationDate: null,
+        insuranceHistory: [],
         hasRentalHistory: false, hasUsageChange: false
       };
     }
@@ -324,6 +327,15 @@ const DetailParser = (() => {
     const otherDamageAmount= data.otherAccidentCost  ?? 0;
     const isAccidentFree   = (myDamageCount + otherDamageCount) === 0;
     const ownerChangeCount = data.ownerChangeCnt     ?? 0;
+    const ownerChanges = !isInsurancePrivate && Array.isArray(data.ownerChanges)
+      ? data.ownerChanges.filter(date => typeof date === 'string') : [];
+    const firstRegistrationDate = !isInsurancePrivate ? data.firstDate ?? null : null;
+    const insuranceHistory = !isInsurancePrivate && Array.isArray(data.accidents)
+      ? data.accidents.filter(item => item && typeof item.date === 'string').map(item => ({
+          date: item.date,
+          amount: typeof item.insuranceBenefit === 'number' && Number.isFinite(item.insuranceBenefit) && item.insuranceBenefit >= 0
+            ? item.insuranceBenefit : null
+        })) : [];
 
     // 개별 보험처리 건당 유효금액 = max(보험지급금, 실제수리비합계)
     // 보험지급금이 수리비보다 낮을 수 있으므로 더 큰 값 사용
@@ -348,7 +360,7 @@ const DetailParser = (() => {
 
     console.log('[EncarScore] 보험이력:', isInsurancePrivate ? '비공개 (큰 감점)' : `${insuranceCount}건`, '/ 내차피해:', myDamageCount, '회 / 렌트이력:', hasRentalHistory, '/ 소유주변경:', ownerChangeCount, '회 / 정보제공불가기간:', unavailablePeriods);
 
-    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, accidentAmounts, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, hasRentalHistory, hasUsageChange };
+    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, accidentAmounts, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, ownerChanges, firstRegistrationDate, insuranceHistory, hasRentalHistory, hasUsageChange };
   }
 
   /* ──────────────────────────────────────────────

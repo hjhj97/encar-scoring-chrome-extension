@@ -149,6 +149,98 @@
   // 4. UI 렌더링
   // ═══════════════════════════════════════════════════════════════
 
+  function createOwnerTimeline(data, now = new Date()) {
+    if (data.isInsurancePrivate) return '<div class="encar-tooltip-detail">소유주·보험이력 조회 불가</div>';
+    const parseDate = value => {
+      if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+      const [year, month, day] = value.split('-').map(Number);
+      const date = new Date(year, month - 1, day);
+      return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+        ? date.getTime() : null;
+    };
+    const start = parseDate(data.firstRegistrationDate);
+    const end = now.getTime();
+    if (start === null || start >= end) return '<div class="encar-tooltip-detail">최초 등록일 정보 없음</div>';
+    const dates = (Array.isArray(data.ownerChanges) ? data.ownerChanges : [])
+      .map(date => ({ date, time: parseDate(date) }))
+      .filter(item => item.time !== null && item.time >= start && item.time <= end)
+      .sort((a, b) => a.time - b.time);
+    const history = Array.isArray(data.insuranceHistory) ? data.insuranceHistory : [];
+    const insurance = history
+      .filter(item => item && typeof item.date === 'string')
+      .map(item => ({ ...item, time: parseDate(item.date) }))
+      .filter(item => item.time !== null && item.time >= start && item.time <= end)
+      .sort((a, b) => a.time - b.time);
+    const missing = dates.length < Number(data.ownerChangeCount || 0);
+    const insuranceMissing = insurance.length < Math.max(history.length, Number(data.insuranceCount) || 0);
+    const today = `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, '0')}.${String(now.getDate()).padStart(2, '0')}`;
+    const boundaries = [
+      { time: start, date: data.firstRegistrationDate },
+      ...dates,
+      { time: end, date: today.replaceAll('.', '-') }
+    ];
+    const colors = ['#4CAF50', '#CDDC39', '#FF9800', '#F44336', '#B73229', '#7A221B', '#3D110E', '#000000'];
+    const calcX = time => 34 + (time - start) / (end - start) * 344;
+    const rows = boundaries.slice(0, -1).map((boundary, index) => {
+      const until = boundaries[index + 1];
+      const last = index === boundaries.length - 2;
+      // 변경일 당일은 시각 정보가 없으므로 변경 후 구간에 배치한다.
+      const events = insurance.filter(item =>
+        item.time >= boundary.time && (last ? item.time <= until.time : item.time < until.time)
+      );
+      const marks = events.map(item => {
+        const x = calcX(item.time);
+        const amount = Number.isFinite(item.amount) && item.amount >= 0
+          ? `${(item.amount / 10000).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}만원`
+          : '금액 미제공';
+        return { ...item, x, amount };
+      });
+      const y = 12;
+      return { index, y, x1: calcX(boundary.time), x2: calcX(until.time), boundary, until, last, marks };
+    });
+    const steps = rows.map(row => {
+      const color = colors[Math.min(row.index, 7)];
+      const pins = row.marks.map(item => `<circle cx="${item.x.toFixed(1)}" cy="${row.y}" r="3" fill="#64B5F6" stroke="#fff" stroke-width="1"/>`).join('');
+      return `<g data-owner-period="${row.index}">
+        <text x="12" y="${row.y + 4}" text-anchor="middle">${row.index + 1}</text>
+        <line x1="${row.x1.toFixed(1)}" y1="${row.y}" x2="${row.x2.toFixed(1)}" y2="${row.y}" stroke="#90a4ae" stroke-width="8"/>
+        <line x1="${row.x1.toFixed(1)}" y1="${row.y}" x2="${row.x2.toFixed(1)}" y2="${row.y}" stroke="${color}" stroke-width="6"/>
+        <circle cx="${row.x1.toFixed(1)}" cy="${row.y}" r="4" fill="${color}" stroke="#cfd8dc"/>
+        <circle cx="${row.x2.toFixed(1)}" cy="${row.y}" r="3" fill="${color}" stroke="#cfd8dc"/>
+        ${pins}
+      </g>`;
+    });
+    const formatOwnershipDuration = (from, to) => {
+      const first = new Date(from);
+      const last = new Date(to);
+      let months = (last.getFullYear() - first.getFullYear()) * 12 + last.getMonth() - first.getMonth();
+      // 월말에 시작한 기간은 대상 월의 마지막 날을 한 달 경과일로 계산한다.
+      const anniversaryDay = Math.min(first.getDate(), new Date(last.getFullYear(), last.getMonth() + 1, 0).getDate());
+      if (last.getDate() < anniversaryDay) months--;
+      if (months >= 1) return `${months}개월`;
+      const days = Math.round((Date.UTC(last.getFullYear(), last.getMonth(), last.getDate())
+        - Date.UTC(first.getFullYear(), first.getMonth(), first.getDate())) / 86400000);
+      return `${Math.max(0, days)}일`;
+    };
+    const details = rows.map(row => {
+      const title = missing ? `확인 기간 ${row.index + 1}` : row.index === 0 ? '최초' : '';
+      const range = `${row.boundary.date.replaceAll('-', '.')} ~ ${row.last ? '현재' : row.until.date.replaceAll('-', '.')}`;
+      const duration = formatOwnershipDuration(row.boundary.time, row.until.time);
+      const events = row.marks.map(item => `${item.date.slice(0, 7).replace('-', '.')} · ${item.amount}`).join(' / ');
+      return `<div class="encar-owner-period-block">
+        <svg viewBox="0 0 390 24" role="img" aria-label="${row.index + 1}번 소유 기간 타임라인">${steps[row.index]}</svg>
+        <div class="encar-owner-summary"><div class="encar-owner-summary-row"><span class="encar-owner-period-number">${row.index + 1}</span><div><span>${title ? `${title} · ` : ''}<strong>${duration}</strong> · ${range}</span>${events ? `<div class="encar-owner-insurance-list">${events}</div>` : ''}</div></div></div>
+      </div>`;
+    }).join('');
+    return `<div class="encar-owner-timeline">
+      <div class="encar-tooltip-detail">소유 기간별 보험이력 · 지급금(만원)</div>
+      ${details}
+      ${missing ? '<div class="encar-tooltip-detail">일부 변경일 누락 · 소유 기간 구분이 불완전할 수 있음</div>' : ''}
+      ${insuranceMissing ? '<div class="encar-tooltip-detail">일부 보험이력 일자 정보 없음</div>' : ''}
+      ${dates.some(change => insurance.some(item => item.time === change.time)) ? '<div class="encar-tooltip-detail">변경일 당일 보험이력은 변경 후 구간에 표시</div>' : ''}
+    </div>`;
+  }
+
   function createYearlyMarketChart(yearlyMarketData, carYear, originPrice = 0, soldOutYearlyData = null) {
     const points = (yearlyMarketData?.points || [])
       .filter(point =>
@@ -786,11 +878,14 @@
         <span>📋 렌트이력</span>
         <span>${Math.round(scoreResult.breakdown.rental)}/${w.rental}</span>
       </div>
+      <section class="encar-tooltip-owner-section">
       <div class="encar-tooltip-row">
         <span>👤 소유주/판매자 이력</span>
         <span>${Math.round(scoreResult.breakdown.ownerChanges)}/${w.ownerChanges}</span>
       </div>
       <div class="encar-tooltip-detail">소유자 변경: ${ownerChangeCount}회</div>
+      ${createOwnerTimeline(fullData)}
+      </section>
       ${dealerAvgScore ? `
       <div class="encar-tooltip-divider"></div>
       <div class="encar-tooltip-row">
@@ -800,6 +895,14 @@
       <div class="encar-tooltip-detail">최근 ${dealerAvgScore.count}개 매물 기준</div>` : ''}
       ${dealerText ? `<div class="encar-tooltip-detail">${dealerText}</div>` : ''}
     `;
+
+    const tooltipMain = document.createElement('div');
+    tooltipMain.className = 'encar-tooltip-main';
+    tooltipMain.append(...tooltip.childNodes);
+    tooltip.appendChild(tooltipMain);
+    const ownerSection = tooltipMain.querySelector('.encar-tooltip-owner-section');
+    const ownerPlaceholder = document.createComment('owner-section-position');
+    ownerSection.before(ownerPlaceholder);
 
     // 클립보드 복사 텍스트 생성
     const { manufacturerName = '', gradeName = '',
@@ -947,6 +1050,16 @@
 
     const positionTooltip = () => {
       if (!tooltip.isConnected) return;
+      // 먼저 기본 한 열의 실제 높이를 측정하고, 넘칠 때만 이력을 오른쪽으로 이동한다.
+      tooltip.classList.remove('encar-tooltip-wide');
+      ownerPlaceholder.after(ownerSection);
+      tooltip.style.maxHeight = 'none';
+      const availableHeight = Math.max(1, window.innerHeight - 24);
+      if (tooltip.offsetHeight > availableHeight && window.innerWidth >= 764) {
+        tooltip.appendChild(ownerSection);
+        tooltip.classList.add('encar-tooltip-wide');
+      }
+      tooltip.style.maxHeight = `${availableHeight}px`;
       const rect = badge.getBoundingClientRect();
       const tooltipHeight = tooltip.offsetHeight;
       const tooltipWidth = tooltip.offsetWidth;
@@ -962,9 +1075,8 @@
       }
 
       // 만약 왼쪽이 브라우저 화면 밖으로 나간다면 강제 조정
-      if (left < 10) {
-        left = 10;
-      }
+      left = Math.max(12, Math.min(left, window.innerWidth - tooltipWidth - 12));
+      top = Math.max(12, Math.min(top, window.innerHeight - tooltipHeight - 12));
 
       tooltip.style.top = `${top}px`;
       tooltip.style.left = `${left}px`;
@@ -1025,18 +1137,31 @@
     };
 
     // 툴팁이 잘리는 현상(overflow: hidden)을 방지하기 위해 body에 직접 삽입하여 fixed 좌표로 렌더링
+    let closeTooltipTimer;
+    const closeTooltip = () => {
+      clearTimeout(closeTooltipTimer);
+      tooltip.remove();
+      window.removeEventListener('resize', positionTooltip);
+    };
+    const scheduleTooltipClose = () => {
+      clearTimeout(closeTooltipTimer);
+      closeTooltipTimer = setTimeout(closeTooltip, 200);
+    };
+    tooltip.addEventListener('mouseenter', () => clearTimeout(closeTooltipTimer));
+    tooltip.addEventListener('mouseleave', scheduleTooltipClose);
     badge.addEventListener('mouseenter', () => {
+      clearTimeout(closeTooltipTimer);
       document.body.appendChild(tooltip);
       tooltip.style.visibility = 'hidden';
       tooltip.style.display = 'block';
       positionTooltip();
+      window.addEventListener('resize', positionTooltip);
       void loadSoldOutPrice();
     });
 
-    badge.addEventListener('mouseleave', () => {
-      if (tooltip.parentNode) {
-        tooltip.parentNode.removeChild(tooltip);
-      }
+    badge.addEventListener('mouseleave', event => {
+      if (!event.isTrusted) closeTooltip();
+      else scheduleTooltipClose();
     });
 
     return badge;
