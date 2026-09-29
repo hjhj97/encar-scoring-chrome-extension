@@ -636,3 +636,24 @@
 .encar-depreciation-level--gentle { color: #81C784; }
 .encar-depreciation-level--flat { color: #4FC3F7; }
 .encar-depreciation-level--none { color: #888; font-weight: 400; }
+
+/* ---- 툴팁 내 조회 중 표시 (거래 현황·감가 현황) ---- */
+.encar-score-tooltip .encar-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #aaa;
+}
+
+.encar-score-tooltip .encar-loading::before {
+  content: '';
+  flex-shrink: 0;
+  width: 11px;
+  height: 11px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: encar-spin 0.8s linear infinite;
+}

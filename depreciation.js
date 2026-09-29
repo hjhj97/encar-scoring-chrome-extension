@@ -47,6 +47,8 @@ const EncarDepreciation = (() => {
     { min: -Infinity, key: 'flat', label: '감가 둔화' }
   ];
 
+  const RETRY_DELAYS_MS = [1000, 2000, 4000];
+
   const CACHE_VERSION = 2;
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const curveCache = new Map();
@@ -408,15 +410,37 @@ const EncarDepreciation = (() => {
     } catch { /* 저장 실패 시 메모리 캐시만 사용 */ }
   }
 
+  /**
+   * 툴팁을 열면 거래 현황 등 여러 조회가 한꺼번에 나가 429(요청 과다)가 나기 쉽다.
+   * 429·5xx·네트워크 오류는 1·2·4초 뒤 다시 요청하고, Retry-After가 있으면 따르되 10초를 넘기지 않는다.
+   */
+  async function fetchJsonWithRetry(url) {
+    for (let attempt = 0; ; attempt++) {
+      let res = null;
+      let failure = null;
+      try {
+        res = await fetch(url, { credentials: 'omit', headers: { 'Accept': 'application/json' } });
+      } catch (error) {
+        failure = error;
+      }
+      if (res?.ok) return res.json();
+      const retryable = !res || res.status === 429 || res.status >= 500;
+      if (!retryable || attempt >= RETRY_DELAYS_MS.length) {
+        throw failure || new Error(`감가곡선 매물 조회 HTTP ${res.status}`);
+      }
+      const retryAfterMs = Number(res?.headers?.get?.('Retry-After')) * 1000;
+      const delay = Math.min(10000, retryAfterMs > 0 ? retryAfterMs : RETRY_DELAYS_MS[attempt]);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
   async function fetchListings(modelGroupName) {
     const q = `(And.Hidden.N._.ModelGroup.${encodeURIComponent(modelGroupName)}.)`;
     const listings = [];
     const now = new Date();
     for (let offset = 0; offset < SEARCH_MAX_ROWS; offset += SEARCH_PAGE_SIZE) {
       const url = `https://api.encar.com/search/car/list/general?q=${q}&sr=%7CModifiedDate%7C${offset}%7C${SEARCH_PAGE_SIZE}&count=true`;
-      const res = await fetch(url, { credentials: 'omit', headers: { 'Accept': 'application/json' } });
-      if (!res.ok) throw new Error(`감가곡선 매물 조회 HTTP ${res.status}`);
-      const data = await res.json();
+      const data = await fetchJsonWithRetry(url);
       const rows = Array.isArray(data?.SearchResults) ? data.SearchResults : [];
       for (const row of rows) {
         const listing = parseListing(row, now);

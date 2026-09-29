@@ -318,3 +318,60 @@ test('툴팁: 제목 줄에 단계, 아래 줄에 1년 후 예상가(ⓘ에 세�
   assert.equal(noModel.level, '추정 불가');
   assert.equal(noModel.forecast, '모델 정보 없음');
 });
+
+test('매물 조회: 429·네트워크 오류는 재시도, 4xx는 즉시 실패', async () => {
+  const rows = synthetic({ n: 400, seed: 11 }).map((row, i) => ({
+    Model: '모델', Badge: row.group, Year: (2026 - Math.floor(row.age)) * 100 + 1 + (i % 12),
+    Mileage: row.km * 10000, Price: Math.min(9000, Math.exp(row.logPrice)), SellType: '일반'
+  }));
+  const responses = [
+    () => ({ ok: false, status: 429, headers: { get: () => '1' } }),
+    () => { throw new TypeError('Failed to fetch'); },
+    () => ({ ok: true, json: async () => ({ Count: rows.length, SearchResults: rows }) })
+  ];
+  let calls = 0;
+  const waits = [];
+  const D = load({
+    setTimeout: (fn, ms) => { waits.push(ms); fn(); },
+    fetch: async () => responses[Math.min(calls++, responses.length - 1)]()
+  });
+  const { curve } = await D.fetchCurve('재시도');
+  assert.ok(curve);
+  assert.equal(calls, 3);
+  assert.equal(waits[0], 1000); // Retry-After: 1초
+  assert.equal(waits[1], 2000); // 두 번째 재시도 기본 대기
+
+  let badCalls = 0;
+  const bad = load({ setTimeout: fn => fn(), fetch: async () => { badCalls++; return { ok: false, status: 400 }; } });
+  await assert.rejects(bad.fetchCurve('잘못된요청'), /HTTP 400/);
+  assert.equal(badCalls, 1);
+});
+
+test('툴팁 로딩: 계산 중에는 스피너, 끝나면 스피너 제거', async () => {
+  const D = load();
+  const curve = D.fitCurve(synthetic({ seed: 12 }));
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  const content = fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8');
+  const loader = content.slice(content.indexOf('    let depreciationLoadStarted = false;'), content.indexOf('    let activityLoading = false;'));
+  const elements = {};
+  const context = vm.createContext({
+    console: { log() {}, warn() {} }, Date, Math, setTimeout,
+    tooltip: { querySelector: selector => (selector.startsWith('[') ? (elements[selector] ||= {}) : null) },
+    fullData: { modelGroupName: '그랜저', yearlyMarketData: null },
+    canShowDepreciation: true, carAgeYears: 5, price: 2000, year: 21, originPrice: 3800, nowMonth: 9,
+    depreciationTotalText: '', clipboardExtras: {}, refreshClipboardText() {}, requestAnimationFrame() {}, positionTooltip() {},
+    pending
+  });
+  vm.runInContext(`${source}
+    EncarDepreciation.fetchCurve = () => pending;
+    ${loader}
+    this.done = loadDepreciation();`, context);
+  const forecast = elements['[data-encar-depreciation-forecast]'];
+  assert.match(forecast.className, /encar-loading/);
+  assert.equal(forecast.textContent, '감가곡선 계산 중…');
+  release({ curve, reason: null });
+  await context.done;
+  assert.doesNotMatch(forecast.className, /encar-loading/);
+  assert.match(forecast.textContent, /^1년 후 예상가/);
+});

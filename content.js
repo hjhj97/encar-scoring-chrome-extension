@@ -893,12 +893,12 @@
       ${canShowDepreciation ? `<section class="encar-depreciation">
         <div class="encar-tooltip-row">
           <span>📉 감가 현황</span>
-          <span class="encar-depreciation-level" data-encar-depreciation-level>조회 대기</span>
+          <span class="encar-depreciation-level" data-encar-depreciation-level></span>
         </div>
-        <div class="encar-depreciation-forecast" data-encar-depreciation-forecast></div>
+        <div class="encar-depreciation-forecast encar-loading" data-encar-depreciation-forecast>감가곡선 계산 중…</div>
         <div class="encar-tooltip-detail">출고 ${carAgeYears.toFixed(1)}년 · ${depreciationTotalText}</div>
       </section>` : ''}
-      ${canAnalyzeSoldOut ? '<section class="encar-trade-activity"><div class="encar-tooltip-row"><span>📊 거래 현황</span><span>최근 90일</span></div><div data-encar-activity-main>조회 대기</div><div data-encar-activity-note></div><div data-encar-activity-scope></div></section>' : ''}
+      ${canAnalyzeSoldOut ? '<section class="encar-trade-activity"><div class="encar-tooltip-row"><span>📊 거래 현황</span><span>최근 90일</span></div><div class="encar-loading" data-encar-activity-main>거래 현황 조회 중…</div><div data-encar-activity-note></div><div data-encar-activity-scope></div></section>' : ''}
       <div class="encar-tooltip-row">
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>
@@ -1142,13 +1142,17 @@
       const showUnavailable = (label, detail) => {
         levelEl.textContent = label;
         levelEl.className = 'encar-depreciation-level encar-depreciation-level--none';
+        forecastEl.className = 'encar-depreciation-forecast';
         forecastEl.textContent = detail;
       };
       if (!fullData.modelGroupName) {
         showUnavailable('추정 불가', '모델 정보 없음');
         return;
       }
-      levelEl.textContent = '계산 중…';
+      // 조회·계산이 끝날 때까지 예상가 자리에 스피너를 보여준다.
+      levelEl.textContent = '';
+      forecastEl.className = 'encar-depreciation-forecast encar-loading';
+      forecastEl.textContent = '감가곡선 계산 중…';
       const percent = value => `${(value * 100).toFixed(1)}%`;
 
       try {
@@ -1160,6 +1164,7 @@
         const result = EncarDepreciation.estimate(curve, { age: carAgeYears, price, originPrice });
         // 1년 후 예상가 = 현재가 - 예상 하락액. 표시값끼리 더하면 현재가가 되도록 하락액을 먼저 반올림한다.
         const yearLoss = Math.round(result.yearLoss);
+        forecastEl.className = 'encar-depreciation-forecast';
         forecastEl.textContent = `1년 후 예상가 ${(price - yearLoss).toLocaleString()}만원 (-${yearLoss.toLocaleString()}만원${result.originRate !== null ? `, 신차가 대비 ${percent(result.originRate)}` : ''})`;
         if (result.level) {
           levelEl.textContent = result.level.label;
@@ -1232,7 +1237,8 @@
       const main = tooltip.querySelector('[data-encar-activity-main]');
       const note = tooltip.querySelector('[data-encar-activity-note]');
       const scope = tooltip.querySelector('[data-encar-activity-scope]');
-      main.textContent = '조회 중…';
+      main.className = 'encar-loading';
+      main.textContent = '거래 현황 조회 중…';
       note.textContent = '';
       scope.textContent = '';
       clipboardExtras.activity = '거래 현황: 조회 중';
@@ -1246,6 +1252,7 @@
         });
         if (!response?.ok) throw new Error(response?.error || '조회 실패');
         const d = response.data;
+        main.className = '';
         const activeText = `현재 판매 중 ${d.active.toLocaleString()}대${d.activeComplete ? '' : ' 이상'}`;
         const soldText = `최근 90일 판매완료 ${d.sold.toLocaleString()}건${d.soldComplete ? '' : ' 이상'}`;
         const total = d.active + d.sold;
@@ -1274,6 +1281,7 @@
         refreshClipboardText();
         activityLoadedAt = Date.now();
       } catch (error) {
+        main.className = '';
         main.textContent = '조회 실패 · 툴팁을 다시 열면 재시도합니다';
         clipboardExtras.activity = '거래 현황: 조회 실패';
         refreshClipboardText();

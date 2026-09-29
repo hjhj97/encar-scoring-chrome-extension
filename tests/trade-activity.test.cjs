@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '../background.js'), 'utf8');
 
-function setup({ sold = 12, total = sold, wrongFilter = false, fail = false, distinctPages = false } = {}) {
+function setup({ sold = 12, total = sold, wrongFilter = false, fail = false, distinctPages = false, failFirst = 0, failStatus = 503 } = {}) {
   let calls = 0;
   const listeners = [];
   const category = { manufacturerCd: '001', modelCd: '002', gradeCd: '003',
@@ -18,12 +18,14 @@ function setup({ sold = 12, total = sold, wrongFilter = false, fail = false, dis
     Array.from({ length: sold }, (_, i) => `<tr><td>${i}</td><td class="fdt end">${date}</td></tr>`).join('') + '</tbody>';
   const row = { Id: 1, Model: category.modelName, Badge: '3.0', BadgeDetail: '프리미엄', Year: 202201 };
   const noop = { addListener() {} };
-  const context = vm.createContext({ URL, Date, TextDecoder, AbortSignal, console,
+  // 재시도 대기(1·2·4초)는 테스트에서 즉시 진행한다.
+  const context = vm.createContext({ URL, Date, TextDecoder, AbortSignal, console, setTimeout: fn => fn(),
     importScripts() {}, chrome: { runtime: { onMessage: {addListener(fn) {listeners.push(fn);}},
       onInstalled: noop, onConnect: noop }, tabs: {onUpdated: noop} },
     fetch: async url => {
       calls++;
-      if (fail) return {ok: false, status: 503};
+      if (fail) return {ok: false, status: failStatus};
+      if (calls <= failFirst) return {ok: false, status: 429, headers: {get: () => null}};
       if (String(url).includes('/vehicle/')) return {ok: true, json: async () => ({vehicleId: 123, category})};
       if (String(url).includes('soldoutCars')) return {ok: true, arrayBuffer: async () => Buffer.from(
         distinctPages ? html.replace('<tbody>', `<tbody><!--${new URL(url).searchParams.get('pagenum')}-->`) : html)};
@@ -58,7 +60,9 @@ test('같은 페이지를 반복 반환하면 집계 거부', async () => {
   await assert.rejects(setup({sold: 20, total: 1000}).run(), /반복/);
 });
 test('네트워크 실패는 0건으로 변환하지 않음', async () => {
-  await assert.rejects(setup({fail: true}).run(), /503/);
+  const env = setup({fail: true});
+  await assert.rejects(env.run(), /503/);
+  assert.equal(env.calls(), 4); // 최초 1회 + 재시도 3회
 });
 test('목록 페이지 메시지는 네트워크 요청 없이 거부', () => {
   const env = setup();
@@ -121,4 +125,15 @@ test('표시: 0일로 반올림하지 않고 적은 거래량도 그대로 표�
   const small = await renderActivity({...base, sold: 3});
   assert.match(small.text, /판매완료 3건/);
   assert.doesNotMatch(small.text, /약 \d+일/);
+});
+
+test('429는 잠시 뒤 재시도해 정상 집계, 404는 재시도하지 않음', async () => {
+  const env = setup({ failFirst: 2 });
+  const result = await env.run();
+  assert.equal(result.sold, 12);
+  assert.equal(env.calls(), 5); // 429 두 번 + 정상 요청 3회(차량·판매완료·현재 매물)
+
+  const notFound = setup({ fail: true, failStatus: 404 });
+  await assert.rejects(notFound.run(), /404/);
+  assert.equal(notFound.calls(), 1);
 });

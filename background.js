@@ -10,10 +10,30 @@ const SOLD_OUT_MAX_PAGES = 20;
 
 // 거래 현황은 가격 유무와 무관하게 판매일을 집계한다. 캐시는 워커 수명 내 30분.
 const activityCache = new Map();
+// 툴팁을 열면 여러 조회가 한꺼번에 나가 429(요청 과다)가 나기 쉬우므로 잠시 기다렸다 다시 요청한다.
+const ACTIVITY_RETRY_DELAYS_MS = [1000, 2000, 4000];
+
 async function activityFetch(url, html = false) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
-  if (!response.ok) throw new Error(`거래 현황 HTTP ${response.status}`);
-  return html ? new TextDecoder('euc-kr').decode(await response.arrayBuffer()) : response.json();
+  for (let attempt = 0; ; attempt++) {
+    let response = null;
+    let failure = null;
+    try {
+      response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    } catch (error) {
+      failure = error; // 네트워크 오류·시간 초과
+    }
+    if (response?.ok) {
+      return html ? new TextDecoder('euc-kr').decode(await response.arrayBuffer()) : response.json();
+    }
+    // 429·5xx·네트워크 오류·시간 초과만 재시도한다. Retry-After가 있으면 따르되 10초를 넘기지 않는다.
+    const retryable = !response || response.status === 429 || response.status >= 500;
+    if (!retryable || attempt >= ACTIVITY_RETRY_DELAYS_MS.length) {
+      throw failure || new Error(`거래 현황 HTTP ${response.status}`);
+    }
+    const retryAfterMs = Number(response?.headers?.get?.('Retry-After')) * 1000;
+    const delay = Math.min(10000, retryAfterMs > 0 ? retryAfterMs : ACTIVITY_RETRY_DELAYS_MS[attempt]);
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
 }
 
 async function fetchTradeActivity(carId) {
