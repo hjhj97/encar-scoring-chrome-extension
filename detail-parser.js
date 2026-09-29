@@ -187,6 +187,7 @@ const DetailParser = (() => {
         powertrainCluster,
         originPrice,
         manufacturerName: vehicleData?.category?.manufacturerName ?? '',
+        modelGroupName: vehicleData?.category?.modelGroupName ?? '', // 감가곡선 조회 단위
         modelName: vehicleData?.category?.modelName ?? '',
         gradeName: vehicleData?.category?.gradeName ?? '',
         year,       // API 기반 연식 (DOM 파싱보다 신뢰도 높음)

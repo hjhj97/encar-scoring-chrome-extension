@@ -549,6 +549,12 @@
   box-shadow: 0 0 4px rgba(255, 213, 79, 0.5);
 }
 
+.encar-year-curve-swatch {
+  width: 10px;
+  height: 0;
+  border-top: 2px dashed #FF8A65;
+}
+
 .encar-year-sold-price-swatch {
   width: 10px;
   height: 0;
@@ -562,3 +568,71 @@
   margin-top: 0;
   overflow: visible;
 }
+.encar-trade-activity {
+  margin: 12px 0;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.encar-trade-ratio {
+  display: block;
+  width: 100%;
+  height: 16px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+.encar-trade-legend {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.encar-trade-active { color: #42A5F5; }
+.encar-trade-sold { color: #EF5350; }
+.encar-trade-ratio-empty { color: #aaa; font-size: 12px; }
+.encar-trade-activity [data-encar-activity-main],
+.encar-trade-activity [data-encar-activity-note],
+.encar-trade-activity [data-encar-activity-scope] {
+  font-size: 14px;
+  color: #eee;
+}
+
+/* ---- 감가 현황 ---- */
+.encar-depreciation {
+  margin: 10px 0 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  overflow-wrap: anywhere;
+}
+
+/* 감가 단계: 제목 줄 오른쪽에 연 감가율과 함께 표시 */
+.encar-depreciation-level {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.encar-depreciation-forecast {
+  cursor: help;
+  font-size: 13px;
+  font-weight: 600;
+  color: #eee;
+  padding: 1px 0 3px 2px;
+}
+
+.encar-depreciation-forecast:empty {
+  display: none;
+}
+
+.encar-depreciation-level--steep { color: #FF8A65; }
+.encar-depreciation-level--average { color: #FFD54F; }
+.encar-depreciation-level--gentle { color: #81C784; }
+.encar-depreciation-level--flat { color: #4FC3F7; }
+.encar-depreciation-level--none { color: #888; font-weight: 400; }

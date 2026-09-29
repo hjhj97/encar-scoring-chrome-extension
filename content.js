@@ -298,7 +298,12 @@
     </div>`;
   }
 
-  function createYearlyMarketChart(yearlyMarketData, carYear, originPrice = 0, soldOutYearlyData = null) {
+  /**
+   * depreciationCurve(선택): 모델 그룹 회귀로 추정한 감가곡선
+   *   priceAt(경과연수) → 곡선 가격, ageShift: 정수 경과연수 → 코호트 평균 경과연수 보정,
+   *   carAge/carPrice: 현재 차량 위치
+   */
+  function createYearlyMarketChart(yearlyMarketData, carYear, originPrice = 0, depreciationCurve = null) {
     const points = (yearlyMarketData?.points || [])
       .filter(point =>
         Number.isInteger(point.age) && point.age >= 0 &&
@@ -309,18 +314,6 @@
     if (points.length === 0) return '';
 
     const currentCalendarYear = new Date().getFullYear();
-    const soldPoints = (soldOutYearlyData?.points || [])
-      .map(point => ({
-        ...point,
-        age: currentCalendarYear - Number(point.year),
-        avgPrice: Number(point.average)
-      }))
-      .filter(point =>
-        Number.isInteger(point.age) && point.age >= 0 &&
-        Number.isFinite(point.avgPrice) && point.avgPrice > 0 &&
-        Number.isFinite(point.count) && point.count > 0
-      )
-      .sort((a, b) => a.age - b.age);
 
     const chartWidth = 280;
     const chartCenter = chartWidth / 2;
@@ -330,8 +323,7 @@
     const plotTop = 11;
     const baselineY = 54;
     const maxAge = Math.max(
-      ...points.map(point => point.age),
-      ...soldPoints.map(point => point.age)
+      ...points.map(point => point.age)
     );
     const maxCount = Math.max(...points.map(point => point.count));
     const parsedOriginPrice = Number(originPrice);
@@ -339,10 +331,24 @@
       ? parsedOriginPrice
       : null;
     const avgPrices = [
-      ...points.map(point => point.avgPrice),
-      ...soldPoints.map(point => point.avgPrice)
+      ...points.map(point => point.avgPrice)
     ];
-    const scalePrices = newCarPrice ? [...avgPrices, newCarPrice] : avgPrices;
+    // 추정 곡선은 판매 중 평균가와 같은 x 범위(0년 ~ 가장 오래된 연식)에서 1/4년 간격으로 그린다.
+    const curveSamples = depreciationCurve
+      ? Array.from({ length: maxAge * 4 + 1 }, (_, i) => {
+          const age = i / 4;
+          return { age, price: depreciationCurve.priceAt(Math.max(0, age + depreciationCurve.ageShift)) };
+        }).filter(sample => Number.isFinite(sample.price) && sample.price > 0)
+      : [];
+    const carCohortAge = depreciationCurve ? depreciationCurve.carAge - depreciationCurve.ageShift : null;
+    const showCarPoint = depreciationCurve && depreciationCurve.carPrice > 0 &&
+      carCohortAge >= -0.5 && carCohortAge <= maxAge + 0.5;
+    const scalePrices = [
+      ...avgPrices,
+      ...(newCarPrice ? [newCarPrice] : []),
+      ...curveSamples.map(sample => sample.price),
+      ...(showCarPoint ? [depreciationCurve.carPrice] : [])
+    ];
     const rawMinPrice = Math.min(...scalePrices);
     const rawMaxPrice = Math.max(...scalePrices);
     const pricePadding = Math.max(100, (rawMaxPrice - rawMinPrice) * 0.12);
@@ -366,7 +372,6 @@
     const ageLabelStep = Math.max(1, Math.ceil((maxAge + 1) / 11));
     const compactPriceLabels = slotWidth < 18;
     const livePriceLabelSize = compactPriceLabels ? 6.3 : 7.2;
-    const soldPriceLabelSize = compactPriceLabels ? 6.1 : 7;
     const pointsByAge = new Map(points.map(point => [point.age, point]));
 
     const barsSvg = points.map(point => {
@@ -411,36 +416,6 @@
     const pricePointsSvg = pricePointElements.map(element => element.circle).join('');
     const priceLabelsSvg = pricePointElements.map(element => element.label).join('');
 
-    // 최근 1년 판매완료 평균가는 주황빛 빨간 점선과 속이 빈 점으로 판매 중 평균가와 구분한다.
-    let previousSoldAge = null;
-    const soldPriceLinePath = soldPoints.map(point => {
-      const command = previousSoldAge === null || point.age - previousSoldAge > 1 ? 'M' : 'L';
-      previousSoldAge = point.age;
-      return `${command} ${calcAgeX(point.age).toFixed(1)} ${calcPriceY(point.avgPrice).toFixed(1)}`;
-    }).join(' ');
-
-    const soldPricePointElements = soldPoints.map(point => {
-      const x = calcAgeX(point.age);
-      const y = calcPriceY(point.avgPrice);
-      const label = compactPriceLabels
-        ? `${(point.avgPrice / 1000).toFixed(1)}천`
-        : point.avgPrice.toLocaleString();
-      // 판매중 가격은 점 바로 위, 판매완료 가격은 한 줄 더 위(상단에서는 아래)에 둬
-      // 같은 연식의 두 평균가가 비슷해도 숫자가 포개지지 않게 한다.
-      const labelY = y < plotTop + 8 ? y + 7 : y - 10.5;
-      const excludedText = point.excludedCount > 0
-        ? ` · 이상치 ${point.excludedCount}대 제외`
-        : '';
-      return {
-        circle: `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.5" fill="rgba(20,20,28,0.95)" stroke="#FF7043" stroke-width="1.4">
-          <title>${point.year}년식 · 최근 1년 판매완료 평균 ${point.avgPrice.toLocaleString()}만원 · ${point.count}대${excludedText}</title>
-        </circle>`,
-        label: `<text x="${x.toFixed(1)}" y="${labelY.toFixed(1)}" fill="#FF7043" stroke="rgba(20,20,28,0.95)" stroke-width="1.5" paint-order="stroke" text-anchor="middle" font-size="${soldPriceLabelSize}" font-weight="700">${label}</text>`
-      };
-    });
-    const soldPricePointsSvg = soldPricePointElements.map(element => element.circle).join('');
-    const soldPriceLabelsSvg = soldPricePointElements.map(element => element.label).join('');
-
     // 선택옵션까지 포함한 신차가는 별도 점 없이 감가선의 가장 왼쪽 시작값으로 표시한다.
     const newCarPriceSvg = newCarPrice ? (() => {
       const y = calcPriceY(newCarPrice);
@@ -452,13 +427,11 @@
         <text x="${plotLeft}" y="66" fill="#CFD8DC" text-anchor="middle" font-size="6.2" font-weight="700">신차가</text>`;
     })() : '';
 
-    const soldPointsByAge = new Map(soldPoints.map(point => [point.age, point]));
     const ageLabelsSvg = Array.from({ length: maxAge + 1 }, (_, age) => {
       if (age % ageLabelStep !== 0 && age !== maxAge) return '';
       const point = pointsByAge.get(age);
-      const soldPoint = soldPointsByAge.get(age);
-      const color = point || soldPoint ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.28)';
-      const calendarYear = point?.year || soldPoint?.year || currentCalendarYear - age;
+      const color = point ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.28)';
+      const calendarYear = point?.year || currentCalendarYear - age;
       const shortYear = String(calendarYear).slice(-2);
       const x = calcAgeX(age).toFixed(1);
       return `<text x="${x}" y="62" fill="${color}" text-anchor="middle" font-size="7">${age}년</text>
@@ -472,6 +445,19 @@
          <text x="${calcAgeX(currentCarAge).toFixed(1)}" y="9" fill="#81C784" text-anchor="middle" font-size="6.2" font-weight="700">현재 차량</text>`
       : '';
 
+    // 추정 감가곡선(점선)과 현재 차량 가격(점). 곡선은 판매 중 평균가 수준에 맞춰 그린다.
+    const curvePath = curveSamples.map((sample, index) =>
+      `${index === 0 ? 'M' : 'L'} ${calcAgeX(sample.age).toFixed(1)} ${calcPriceY(sample.price).toFixed(1)}`
+    ).join(' ');
+    const curveSvg = curveSamples.length > 1
+      ? `<path d="${curvePath}" fill="none" stroke="#FF8A65" stroke-width="1.4" stroke-dasharray="3 2" stroke-linejoin="round" stroke-linecap="round"><title>추정 감가곡선 (평균 주행 가정)</title></path>`
+      : '';
+    const carPointSvg = showCarPoint
+      ? `<circle cx="${calcAgeX(Math.min(maxAge, Math.max(0, carCohortAge))).toFixed(1)}" cy="${calcPriceY(depreciationCurve.carPrice).toFixed(1)}" r="3" fill="#81C784" stroke="rgba(20,20,28,0.95)" stroke-width="1.2">
+          <title>이 차량 ${depreciationCurve.carPrice.toLocaleString()}만원 · 출고 ${depreciationCurve.carAge.toFixed(1)}년</title>
+        </circle>`
+      : '';
+
     const middleCount = Math.round(maxCount / 2);
     const middlePrice = Math.round((minPrice + maxPrice) / 2);
     return `<div class="encar-year-market-chart">
@@ -481,7 +467,7 @@
         <div class="encar-year-chart-legend">
           <span><span class="encar-year-count-swatch"></span>매물수</span>
           <span><span class="encar-year-price-swatch"></span>판매중</span>
-          ${soldPoints.length > 0 ? '<span><span class="encar-year-sold-price-swatch"></span>판매완료</span>' : ''}
+          ${curveSvg ? '<span><span class="encar-year-curve-swatch"></span>추정곡선</span>' : ''}
         </div>
       </div>
       <svg class="encar-year-chart-svg" viewBox="0 0 ${chartWidth} 87">
@@ -500,12 +486,11 @@
         ${barsSvg}
         ${currentAgeMarker}
         <path d="${priceLinePath}" fill="none" stroke="#FFD54F" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${curveSvg}
         ${pricePointsSvg}
-        ${soldPoints.length > 0 ? `<path d="${soldPriceLinePath}" fill="none" stroke="#FF7043" stroke-width="1.5" stroke-dasharray="3 2" stroke-linejoin="round" stroke-linecap="round"/>
-        ${soldPricePointsSvg}` : ''}
+        ${carPointSvg}
         ${newCarPriceSvg}
         ${priceLabelsSvg}
-        ${soldPriceLabelsSvg}
         ${ageLabelsSvg}
         <text x="${chartCenter}" y="83" fill="rgba(255,255,255,0.45)" text-anchor="middle" font-size="6.3">출고 후 경과 연수 · 등록연식</text>
       </svg>
@@ -525,7 +510,7 @@
     `;
 
     // ── 툴팁 상세 정보 계산 ──
-    const { actualCarId = null, soldOutCarType = 'for', powertrainCluster = null,
+    const { actualCarId = null,
             originPrice = 0, price = 0, mileage = 0, year = 0,
             insuranceCount = 0, isInsurancePrivate = false,
             myDamageCount = 0, myDamageAmount = 0,
@@ -841,29 +826,6 @@
       </div>`;
     }
     const yearlyMarketDetail = createYearlyMarketChart(fullData.yearlyMarketData, year, originPrice);
-    const liveYearPoints = (fullData.yearlyMarketData?.points || [])
-      .filter(point => Number.isInteger(point.age) && Number.isFinite(point.avgPrice));
-    const maxMarketAge = liveYearPoints.length > 0
-      ? Math.max(...liveYearPoints.map(point => point.age))
-      : null;
-    const referencePriceByYear = new Map(
-      liveYearPoints.map(point => [Number(point.year), Number(point.avgPrice) || 0])
-    );
-    const selectedCalendarYear = year > 0 ? 2000 + year : 0;
-    const currentCalendarYear = new Date().getFullYear();
-    const soldOutYearReferences = maxMarketAge !== null
-      ? Array.from({ length: maxMarketAge + 1 }, (_, age) => {
-          const calendarYear = currentCalendarYear - age;
-          return {
-            year: calendarYear,
-            referencePrice: referencePriceByYear.get(calendarYear) ||
-              (calendarYear === selectedCalendarYear ? price : 0)
-          };
-        })
-      : selectedCalendarYear > 0
-        ? [{ year: selectedCalendarYear, referencePrice: price }]
-        : [];
-
     // 연간 평균 주행거리 (출고년월 기준 월단위 계산)
     const { month: registMonth = 0 } = fullData;
     const now = new Date();
@@ -874,6 +836,18 @@
     const annualKm = (mileage > 0 && ageMonths > 0)
       ? `연평균 ${Math.round(mileage / ageMonths * 12).toLocaleString()}km`
       : '';
+
+    // 감가 현황: 누적 감가는 바로 표시하고, 감가 속도는 모델 그룹 감가곡선을 불러온 뒤 채운다.
+    const carAgeYears = year > 0
+      ? Math.max(0, (nowYear - (2000 + year)) + (nowMonth - (registMonth > 0 ? registMonth : 6.5)) / 12)
+      : null;
+    const cumulativeDepreciation = originPrice > 0 && price > 0 ? 1 - price / originPrice : null;
+    const depreciationTotalText = cumulativeDepreciation === null
+      ? '신차가 정보 없음'
+      : `신차가 ${originPrice.toLocaleString()}만원 → ${price.toLocaleString()}만원 · ${cumulativeDepreciation >= 0
+          ? `누적 ${Math.round(cumulativeDepreciation * 100)}% 감가`
+          : `신차가보다 ${Math.round(-cumulativeDepreciation * 100)}% 높음`}`;
+    const canShowDepreciation = carAgeYears !== null && price > 0;
 
     // 딜러 정보 텍스트 (가입일 + 총 판매대수)
     let dealerText = '';
@@ -914,13 +888,17 @@
         <span>${Math.round(scoreResult.breakdown.price)}/${w.price}</span>
       </div>
       ${priceDetail ? `<div class="encar-tooltip-detail">${priceDetail}</div>` : ''}
-      ${canAnalyzeSoldOut ? `<div class="encar-tooltip-detail encar-sold-price-detail">
-        <span>최근 1년 판매완료 평균가</span>
-        <strong data-encar-sold-average>조회 대기</strong>
-        <span data-encar-sold-count></span>
-      </div>` : ''}
       ${marketDetail}
       ${yearlyMarketDetail}
+      ${canShowDepreciation ? `<section class="encar-depreciation">
+        <div class="encar-tooltip-row">
+          <span>📉 감가 현황</span>
+          <span class="encar-depreciation-level" data-encar-depreciation-level>조회 대기</span>
+        </div>
+        <div class="encar-depreciation-forecast" data-encar-depreciation-forecast></div>
+        <div class="encar-tooltip-detail">출고 ${carAgeYears.toFixed(1)}년 · ${depreciationTotalText}</div>
+      </section>` : ''}
+      ${canAnalyzeSoldOut ? '<section class="encar-trade-activity"><div class="encar-tooltip-row"><span>📊 거래 현황</span><span>최근 90일</span></div><div data-encar-activity-main>조회 대기</div><div data-encar-activity-note></div><div data-encar-activity-scope></div></section>' : ''}
       <div class="encar-tooltip-row">
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>
@@ -1039,7 +1017,18 @@
       clipboardLines.push(`${dealerFullName} 평균점수: ${dealerAvgScore.avg}점 (최근 ${dealerAvgScore.count}개 매물)`);
     }
     if (dealerText) clipboardLines.push(dealerText);
-    const clipboardText = clipboardLines.join('\n');
+    let clipboardText = clipboardLines.join('\n');
+    // 툴팁을 연 뒤 늦게 도착하는 거래 현황·감가 정보는 여기에 모아 복사·AI 분석 텍스트 끝에 붙인다.
+    const clipboardExtras = {};
+    const refreshClipboardText = () => {
+      clipboardText = [clipboardLines.join('\n'), clipboardExtras.activity, clipboardExtras.depreciation]
+        .filter(Boolean)
+        .join('\n');
+    };
+    if (canShowDepreciation && cumulativeDepreciation !== null) {
+      clipboardExtras.depreciation = `감가: ${depreciationTotalText}`;
+      refreshClipboardText();
+    }
 
     // 배지 클릭 시 액션 메뉴 표시
     badge.addEventListener('click', (e) => {
@@ -1142,55 +1131,157 @@
       tooltip.style.visibility = 'visible';
     };
 
-    let soldOutPriceLoadStarted = false;
-    const loadSoldOutPrice = async () => {
-      if (soldOutPriceLoadStarted || !canAnalyzeSoldOut) return;
-      soldOutPriceLoadStarted = true;
+    let depreciationLoadStarted = false;
+    const loadDepreciation = async () => {
+      if (depreciationLoadStarted || !canShowDepreciation) return;
+      depreciationLoadStarted = true;
+      const levelEl = tooltip.querySelector('[data-encar-depreciation-level]');
+      const forecastEl = tooltip.querySelector('[data-encar-depreciation-forecast]');
+      if (!levelEl || !forecastEl) return;
+      // 추정할 수 없으면 예상가 자리에 사유를 표시한다.
+      const showUnavailable = (label, detail) => {
+        levelEl.textContent = label;
+        levelEl.className = 'encar-depreciation-level encar-depreciation-level--none';
+        forecastEl.textContent = detail;
+      };
+      if (!fullData.modelGroupName) {
+        showUnavailable('추정 불가', '모델 정보 없음');
+        return;
+      }
+      levelEl.textContent = '계산 중…';
+      const percent = value => `${(value * 100).toFixed(1)}%`;
 
-      const averageEl = tooltip.querySelector('[data-encar-sold-average]');
-      const countEl = tooltip.querySelector('[data-encar-sold-count]');
-      if (!averageEl || !countEl) return;
-      averageEl.textContent = '조회 중…';
-
-      const soldYearlyData = await DetailParser.fetchSoldOutYearlyData(
-        soldOutLookupId,
-        soldOutYearReferences,
-        {
-          carType: soldOutCarType,
-          // 30e처럼 파워트레인 클러스터를 쓰는 차트는 판매완료 데이터도 하위 트림을 합친다.
-          broadenTrim: Boolean(powertrainCluster)
+      try {
+        const { curve, reason } = await EncarDepreciation.fetchCurve(fullData.modelGroupName);
+        if (!curve) {
+          showUnavailable('추정 불가', reason);
+          return;
         }
-      );
-      const selectedSoldPoint = soldYearlyData?.points?.find(
-        point => Number(point.year) === selectedCalendarYear
-      );
+        const result = EncarDepreciation.estimate(curve, { age: carAgeYears, price, originPrice });
+        // 1년 후 예상가 = 현재가 - 예상 하락액. 표시값끼리 더하면 현재가가 되도록 하락액을 먼저 반올림한다.
+        const yearLoss = Math.round(result.yearLoss);
+        forecastEl.textContent = `1년 후 예상가 ${(price - yearLoss).toLocaleString()}만원 (-${yearLoss.toLocaleString()}만원${result.originRate !== null ? `, 신차가 대비 ${percent(result.originRate)}` : ''})`;
+        if (result.level) {
+          levelEl.textContent = result.level.label;
+          levelEl.className = `encar-depreciation-level encar-depreciation-level--${result.level.key}`;
+        } else {
+          // 단계는 신차가 대비로 판단하므로 신차가가 없으면 판정하지 않는다.
+          levelEl.textContent = '신차가 정보 없음';
+          levelEl.className = 'encar-depreciation-level encar-depreciation-level--none';
+        }
+        // 표본이 적은 모델 그룹은 부트스트랩 90% 범위를 함께 표시한다. 신차가가 있으면 신차가 대비로 보여준다.
+        const range = result.originRateRange || result.rateRange;
+        const rangeText = range
+          ? `90% 범위 ${result.originRateRange ? '신차가 대비 ' : ''}${percent(range[0])}~${percent(range[1])}`
+          : '';
+        // 현재가 대비 감가율·회귀 근거는 화면에서 빼고 ⓘ 설명과 복사 텍스트에만 둔다.
+        const rateText = [
+          `현재가 대비 ${percent(result.totalRate)} (연식 ${percent(result.ageRate)} + 주행 ${percent(result.mileageRate)})`,
+          ...(rangeText ? [rangeText] : [])
+        ].join(' · ');
+        const basisText = [
+          `${fullData.modelGroupName} 매물 ${curve.sampleCount.toLocaleString()}대 회귀`,
+          `1만km당 -${percent(result.mileageRatePer10k)}`,
+          `모델 평균 연 ${Math.round(result.kmPerYear * 10000).toLocaleString()}km 주행 가정`,
+          ...(result.extrapolated ? ['표본 연식 범위 밖 추정'] : [])
+        ].join(' · ');
+        forecastEl.textContent += ' ⓘ';
+        forecastEl.title = `${rateText}\n${basisText}\n\n` + '1년 후 예상가 = 현재가 - 1년간 예상 하락액. 신차가 대비 = 하락액 ÷ 신차가(옵션 포함), 현재가 대비 = 연식 감가(경과연수에 따른 하락) + 주행 감가(모델 평균만큼 1년 더 주행할 때의 하락).' +
+          ' 단계(신차가 대비): 6.5% 이상 가파른 감가 · 4~6.5% 평균적 감가 · 2.5~4% 완만한 감가 · 2.5% 미만 감가 둔화.' +
+          ' 같은 모델 그룹(여러 세대·트림)의 최근 매물을 회귀해 추정했으며, 지금까지의 주행 이력은 현재 가격에 이미 반영돼 있습니다.' +
+          (range ? ' 괄호 안은 표본이 500대 미만이라 매물을 다시 뽑아 50번 추정한 90% 범위입니다.' : '') +
+          ' 매물 가격 기준이며 실제 거래가나 향후 시세 변동과 다를 수 있습니다.';
 
-      if (selectedSoldPoint?.average > 0 && selectedSoldPoint.count > 0) {
-        averageEl.textContent = `${selectedSoldPoint.average.toLocaleString()}만원`;
-        const notes = [`${selectedSoldPoint.count}대`];
-        if (selectedSoldPoint.excludedCount > 0) notes.push(`이상치 ${selectedSoldPoint.excludedCount}대 제외`);
-        if (selectedSoldPoint.truncated) notes.push('최대 400대 기준');
-        countEl.textContent = `(${notes.join(' · ')})`;
-        console.log(`[EncarScore] ${selectedCalendarYear}년식 최근 1년 판매완료 평균가: ${selectedSoldPoint.average}만원 (${selectedSoldPoint.count}대)`);
-      } else {
-        averageEl.textContent = '데이터 없음';
-        countEl.textContent = '';
-      }
-
-      if (soldYearlyData?.points?.length > 0) {
-        const updatedChartHtml = createYearlyMarketChart(
-          fullData.yearlyMarketData,
-          year,
-          originPrice,
-          soldYearlyData
-        );
-        const holder = document.createElement('div');
-        holder.innerHTML = updatedChartHtml.trim();
+        // 연식별 차트에 추정 곡선과 현재 차량 위치를 겹쳐 다시 그린다.
+        // 정수 경과연수 코호트의 평균 경과연수는 연중 고르게 등록됐다고 보고 보정한다.
+        const ageShift = (nowMonth - 6.5) / 12;
+        const priceAt = EncarDepreciation.fitLevelToPoints(curve, fullData.yearlyMarketData?.points || [], ageShift);
         const currentChart = tooltip.querySelector('.encar-year-market-chart');
-        const updatedChart = holder.firstElementChild;
-        if (currentChart && updatedChart) currentChart.replaceWith(updatedChart);
+        if (priceAt && currentChart) {
+          const holder = document.createElement('div');
+          holder.innerHTML = createYearlyMarketChart(fullData.yearlyMarketData, year, originPrice, {
+            priceAt,
+            ageShift,
+            carAge: carAgeYears,
+            carPrice: price
+          }).trim();
+          if (holder.firstElementChild) currentChart.replaceWith(holder.firstElementChild);
+        }
+
+        clipboardExtras.depreciation = [
+          `감가: ${depreciationTotalText}`,
+          `현재 감가: ${levelEl.textContent} · ${forecastEl.textContent.replace(/ ⓘ$/, '')} · ${rateText}`,
+          `감가 추정 근거: ${basisText} (매물 가격 기준 추정)`
+        ].join('\n');
+        refreshClipboardText();
+      } catch (error) {
+        // 실패하면 다음 툴팁 열기에서 다시 시도한다.
+        depreciationLoadStarted = false;
+        showUnavailable('조회 실패', '감가곡선 조회 실패 · 툴팁을 다시 열면 재시도합니다');
+        console.warn('[EncarScore] 감가곡선 조회 실패:', error);
+      } finally {
+        requestAnimationFrame(positionTooltip);
       }
-      requestAnimationFrame(positionTooltip);
+    };
+
+    let activityLoading = false;
+    let activityLoadedAt = 0;
+    const loadTradeActivity = async () => {
+      if (!canAnalyzeSoldOut || activityLoading || Date.now() - activityLoadedAt < 30 * 60 * 1000) return;
+      activityLoading = true;
+      const main = tooltip.querySelector('[data-encar-activity-main]');
+      const note = tooltip.querySelector('[data-encar-activity-note]');
+      const scope = tooltip.querySelector('[data-encar-activity-scope]');
+      main.textContent = '조회 중…';
+      note.textContent = '';
+      scope.textContent = '';
+      clipboardExtras.activity = '거래 현황: 조회 중';
+      refreshClipboardText();
+      try {
+        const response = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({type: 'FETCH_ENCAR_TRADE_ACTIVITY', carId: soldOutLookupId}, result => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(result);
+          });
+        });
+        if (!response?.ok) throw new Error(response?.error || '조회 실패');
+        const d = response.data;
+        const activeText = `현재 판매 중 ${d.active.toLocaleString()}대${d.activeComplete ? '' : ' 이상'}`;
+        const soldText = `최근 90일 판매완료 ${d.sold.toLocaleString()}건${d.soldComplete ? '' : ' 이상'}`;
+        const total = d.active + d.sold;
+        const complete = d.activeComplete && d.soldComplete;
+        const activePercent = total > 0 ? d.active / total * 100 : 0;
+        const soldPercent = total > 0 ? d.sold / total * 100 : 0;
+        // 부분 집계는 실제 비율을 알 수 없으므로 비율 막대를 그리지 않는다.
+        main.innerHTML = complete && total > 0
+          ? `<svg class="encar-trade-ratio" viewBox="0 0 100 4" preserveAspectRatio="none" role="img" aria-label="${activeText} (${activePercent.toFixed(1)}%), ${soldText} (${soldPercent.toFixed(1)}%)">
+              <title>현재 재고와 최근 90일 판매완료 건수의 상대 비율이며 판매확률이 아닙니다.</title>
+              <rect width="${activePercent}" height="4" fill="#42A5F5" />
+              <rect x="${activePercent}" width="${soldPercent}" height="4" fill="#EF5350" />
+            </svg>`
+          : `<div class="encar-trade-ratio-empty">${complete ? '비교할 매물 없음' : '집계 일부 · 비율 표시 불가'}</div>`;
+        note.innerHTML = `<div class="encar-trade-legend"><span class="encar-trade-active">${activeText}${complete && total > 0 ? ` · ${activePercent.toFixed(1)}%` : ''}</span><span class="encar-trade-sold">${soldText}${complete && total > 0 ? ` · ${soldPercent.toFixed(1)}%` : ''}</span></div>`;
+        if (!d.soldComplete || !d.activeComplete) scope.textContent = '재고 소진 추정 — 집계 일부';
+        else if (d.sold === 0) scope.textContent = '재고 소진 추정 — 판매완료 없음';
+        else if (d.active === 0) scope.textContent = '재고 소진 추정 — 현재 매물 없음';
+        else if (d.sold < 10) scope.textContent = '재고 소진 추정 — 표본 부족';
+        else {
+          const days = d.active * 90 / d.sold;
+          scope.textContent = `재고 소진 추정 ${days < 1 ? '1일 미만' : `약 ${Math.round(days).toLocaleString()}일`}`;
+        }
+        scope.title = '현재 매물 수 × 90 ÷ 최근 90일 판매완료 건수. 신규 유입 없이 같은 판매 속도가 유지된다는 가정이며, 개별 차량의 예상 판매 기간이 아닙니다. 판매완료 기록의 중복 및 양쪽 판매 유형의 일치 여부는 검증되지 않았습니다.';
+        clipboardExtras.activity = '거래 현황: ' + activeText + '\n' + soldText + '\n' + scope.textContent + `\n${d.scope} · ${d.start}~${d.end}` + '\n주의: ' + scope.title;
+        refreshClipboardText();
+        activityLoadedAt = Date.now();
+      } catch (error) {
+        main.textContent = '조회 실패 · 툴팁을 다시 열면 재시도합니다';
+        clipboardExtras.activity = '거래 현황: 조회 실패';
+        refreshClipboardText();
+        console.warn('[EncarScore] 거래 현황 조회 실패:', error);
+      } finally {
+        activityLoading = false;
+        requestAnimationFrame(positionTooltip);
+      }
     };
 
     // 툴팁이 잘리는 현상(overflow: hidden)을 방지하기 위해 body에 직접 삽입하여 fixed 좌표로 렌더링
@@ -1213,7 +1304,8 @@
       tooltip.style.display = 'block';
       positionTooltip();
       window.addEventListener('resize', positionTooltip);
-      void loadSoldOutPrice();
+      void loadTradeActivity();
+      void loadDepreciation();
     });
 
     badge.addEventListener('mouseleave', event => {

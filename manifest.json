@@ -28,6 +28,7 @@
         "scoring/owner.js",
         "scoring/calculator.js",
         "detail-parser.js",
+        "depreciation.js",
         "content.js"
       ],
       "css": ["styles.css"],

@@ -8,6 +8,98 @@ const SOLD_OUT_URL = 'https://www.encar.com/dc/dc_carsearchpop.do';
 const SOLD_OUT_PAGE_SIZE = 20;
 const SOLD_OUT_MAX_PAGES = 20;
 
+// 거래 현황은 가격 유무와 무관하게 판매일을 집계한다. 캐시는 워커 수명 내 30분.
+const activityCache = new Map();
+async function activityFetch(url, html = false) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+  if (!response.ok) throw new Error(`거래 현황 HTTP ${response.status}`);
+  return html ? new TextDecoder('euc-kr').decode(await response.arrayBuffer()) : response.json();
+}
+
+async function fetchTradeActivity(carId) {
+  const vehicle = await activityFetch(`https://api.encar.com/v1/readside/vehicle/${carId}`);
+  const c = vehicle.category;
+  const year = String(c?.yearMonth || '').slice(0, 4);
+  if (!/^\d{4}$/.test(year) || !c.modelName || !c.gradeName) throw new Error('차량 조건 확인 불가');
+  const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const end = formatLocalDate(today);
+  today.setDate(today.getDate() - 89);
+  const start = formatLocalDate(today);
+  const key = JSON.stringify([c.manufacturerCd, c.modelCd, c.gradeCd, c.gradeDetailCd, year, end]);
+  const cached = activityCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.promise;
+  const promise = (async () => {
+    const actualId = String(vehicle.vehicleId || carId);
+    let sold = 0, soldComplete = false, previousDate = '9999/99/99';
+    const pageSignatures = new Set();
+    for (let page = 1; page <= 20; page++) {
+      const url = new URL(SOLD_OUT_URL);
+      Object.entries({method: 'soldoutCars', carTypeCd: '1', carid: actualId, pagenum: String(page)})
+        .forEach(([name, value]) => url.searchParams.set(name, value));
+      const html = await activityFetch(url, true);
+      const parsed = parseSoldOutPage(html), f = parsed.filters;
+      if (parsed.requestedCarId !== actualId || f.manufacturerCd !== c.manufacturerCd ||
+          f.modelCd !== c.modelCd || f.gradeCd !== c.gradeCd ||
+          f.gradeDetailCd !== (c.gradeDetailCd || '') ||
+          f.startYearMonth !== `${year}01` || f.endYearMonth !== `${year}12` ||
+          !/class=["'][^"']*part\s+result[^"']*["']/i.test(html)) {
+        throw new Error('판매완료 검색 조건 확인 불가');
+      }
+      const dates = [...html.matchAll(/<td\b[^>]*class=["'][^"']*\bfdt\b[^"']*["'][^>]*>\s*(\d{4}\/\d{2}\/\d{2})/gi)].map(m => m[1]);
+      if (!dates.length && parsed.total > 0) throw new Error('판매일 파싱 실패');
+      const signature = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i)?.[1] || dates.join(',');
+      if (dates.length && pageSignatures.has(signature)) throw new Error('판매완료 페이지 반복');
+      pageSignatures.add(signature);
+      for (const date of dates) {
+        if (date > previousDate) throw new Error('판매일 정렬 확인 불가');
+        previousDate = date;
+        if (date >= start && date <= end) sold++;
+      }
+      if (dates.some(date => date < start) || page * 20 >= parsed.total) { soldComplete = true; break; }
+      if (dates.length !== 20) throw new Error('판매완료 페이지 누락');
+    }
+    // 모델/연도 후보를 모두 받은 뒤 정확한 트림과 중복 광고를 로컬에서 필터링한다.
+    if (!c.modelGroupName || /[.\r\n]/.test(c.modelGroupName)) throw new Error('검색 모델 그룹 확인 불가');
+    const modelFilter = /[.\r\n]/.test(c.modelName) ? '' : `_.Model.${c.modelName}.`;
+    const q = `(And.Hidden.N._.ModelGroup.${c.modelGroupName}.${modelFilter}_.Year.range(${year}01..${year}12).)`;
+    const ids = new Set();
+    let total = Infinity, loaded = 0;
+    for (let offset = 0; offset < total && offset < 5000; offset += 500) {
+      const url = new URL('https://api.encar.com/search/car/list/general');
+      Object.entries({q, sr: `|ModifiedDate|${offset}|500`, count: 'true'})
+        .forEach(([name, value]) => url.searchParams.set(name, value));
+      const data = await activityFetch(url);
+      if (!Number.isFinite(data.Count) || !Array.isArray(data.SearchResults)) throw new Error('현재 매물 응답 오류');
+      total = data.Count;
+      loaded += data.SearchResults.length;
+      for (const row of data.SearchResults) {
+        if (row.Model === c.modelName && row.Badge === c.gradeName && String(row.Year).slice(0, 4) === year &&
+            (!c.gradeDetailName || c.gradeDetailName === '없음' || row.BadgeDetail === c.gradeDetailName) &&
+            row.ServiceCopyCar !== 'DUPLICATION' && row.Id) ids.add(String(row.Id));
+      }
+      if (!data.SearchResults.length && offset < total) throw new Error('현재 매물 페이지 누락');
+    }
+    return { sold, active: ids.size, soldComplete, activeComplete: loaded >= total,
+      start, end, scope: `${c.modelName} ${c.gradeName} ${c.gradeDetailName || ''} · ${year}년 등록`,
+      fetchedAt: Date.now() };
+  })();
+  if (activityCache.size > 100) activityCache.delete(activityCache.keys().next().value);
+  activityCache.set(key, { promise, expires: Date.now() + 30 * 60 * 1000 });
+  promise.catch(() => activityCache.delete(key));
+  return promise;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== 'FETCH_ENCAR_TRADE_ACTIVITY') return false;
+  if (!/^https:\/\/fem\.encar\.com\/cars\/detail\//.test(sender.url || '') || !/^\d+$/.test(String(message.carId))) {
+    sendResponse({ ok: false, error: '상세 페이지 전용 요청' });
+    return false;
+  }
+  fetchTradeActivity(String(message.carId)).then(data => sendResponse({ok: true, data}))
+    .catch(error => sendResponse({ok: false, error: error.message}));
+  return true;
+});
+
 function parseSoldOutPrice(text) {
   const normalized = String(text || '').replace(/<[^>]*>/g, ' ').replace(/,/g, '');
   const match = normalized.match(/\b(\d{2,6})\b/);
