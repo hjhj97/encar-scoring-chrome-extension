@@ -32,6 +32,7 @@
       deduction += Math.floor((5000 - avgAnnualKm) / 1000) * 2;
     }
 
-    return Math.max(0, maxPoints - deduction);
+    // 고정 감점은 기본 배점 기준이므로 사용자 가중치에 비례해 환산
+    return Math.max(0, maxPoints - deduction * (maxPoints / DEFAULT_WEIGHTS.mileage));
   };
 })(window.EncarScoring = window.EncarScoring || {});

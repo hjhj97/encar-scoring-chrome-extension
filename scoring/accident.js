@@ -53,13 +53,15 @@
       else baseScore = maxPoints * 0.1;
     }
 
-    if (accidentAmounts.length >= 4) baseScore = Math.max(0, baseScore - 5);
-    else if (accidentAmounts.length >= 2) baseScore = Math.max(0, baseScore - 2);
+    // 고정 감점은 기본 배점 기준이므로 사용자 가중치에 비례해 환산
+    const scale = maxPoints / DEFAULT_WEIGHTS.accident;
+    if (accidentAmounts.length >= 4) baseScore = Math.max(0, baseScore - 5 * scale);
+    else if (accidentAmounts.length >= 2) baseScore = Math.max(0, baseScore - 2 * scale);
 
     if (hasUnavailablePeriod) {
       const months  = calcUnavailableMonths(unavailablePeriods);
       const penalty = months <= 1 ? 0 : months <= 6 ? 10 : 20;
-      baseScore = Math.max(0, baseScore - penalty);
+      baseScore = Math.max(0, baseScore - penalty * scale);
     }
 
     return baseScore;

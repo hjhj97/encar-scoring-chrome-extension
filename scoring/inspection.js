@@ -16,12 +16,16 @@
   ns.scoreInspection = function (data, maxPoints) {
     if (data.isInspectionPrivate) return 0;
 
-    let score = maxPoints;
+    // 감점표는 기본 배점 기준이므로 기본 배점으로 계산한 뒤 사용자 가중치로 환산
+    const base = DEFAULT_WEIGHTS.inspection;
+    const scale = maxPoints / base;
+    let score = base;
     const {
       hasInspection = false, hasReplacement = false, hasWelding = false, hasCorrosion = false,
       hasDiagnosis  = false, diagFrameReplacement = false, diagPanelReplacement = false,
       rankCounts    = null
     } = data;
+    const finish = (value) => Math.min(base, Math.max(0, value)) * scale;
 
     if (!hasDiagnosis) {
       score -= 5;
@@ -32,10 +36,15 @@
       if (diagPanelReplacement) score -= 3;
       const { diagnosisTier = 'BASIC' } = data;
       if (diagnosisTier === 'PLUSPLUS') score += 4;
-      return Math.max(0, score);
+      // 엔카진단은 교환만 판정하므로 성능점검표의 골격 판금은 별도로 반영
+      if (rankCounts) {
+        score -= rankCounts.B.W * 12;
+        score -= rankCounts.A.W * 8;
+      }
+      return finish(score);
     }
 
-    if (!hasInspection) return Math.max(0, maxPoints * 0.5 - 5);
+    if (!hasInspection) return finish(base * 0.5 - 5);
 
     if (rankCounts) {
       score -= rankCounts.B.X * 15;
@@ -54,6 +63,6 @@
       if (hasReplacement) score -= 2;
     }
 
-    return Math.max(0, score);
+    return finish(score);
   };
 })(window.EncarScoring = window.EncarScoring || {});
