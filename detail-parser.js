@@ -736,6 +736,10 @@ const DetailParser = (() => {
     })();
 
     yearlyMarketDataCache.set(cacheKey, promise);
+    // 실패(null)를 캐시하면 같은 모델의 다른 매물도 모두 가격 데이터 없이 채점되므로 다음 조회에서 다시 시도
+    promise.then(data => {
+      if (!data) yearlyMarketDataCache.delete(cacheKey);
+    });
     return promise;
   }
 
@@ -822,11 +826,19 @@ const DetailParser = (() => {
   /* ──────────────────────────────────────────────
    * 공통 fetch helper
    * ────────────────────────────────────────────── */
+  // 목록 페이지는 카드마다 시세 검색을 동시에 보내 429가 잦으므로 잠시 쉬었다가 재시도한다
+  const RETRY_DELAYS_MS = [1000, 2000, 4000];
+
   async function fetchJson(url) {
-    const res = await fetch(url, {
-      credentials: 'omit',
-      headers: { 'Accept': 'application/json' }
-    });
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      res = await fetch(url, {
+        credentials: 'omit',
+        headers: { 'Accept': 'application/json' }
+      });
+      if (res.status !== 429 || attempt >= RETRY_DELAYS_MS.length) break;
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt] + Math.random() * 500));
+    }
     if (!res.ok) {
       console.warn('[EncarScore] API 오류:', url, res.status);
       return null;
