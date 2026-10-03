@@ -28,6 +28,22 @@
     return `${Math.floor(diffDay / 30)}개월 전`;
   }
 
+  /** 현재 광고 등록 후 7일(168시간) 이내 표시. 시간대 없는 엔카 시각은 한국 시간이다. */
+  function createNewListingMarker(dateStr, now = Date.now()) {
+    if (typeof dateStr !== 'string' || !Number.isFinite(now)) return '';
+    const value = dateStr.trim();
+    const parts = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?$/i);
+    if (!parts) return '';
+    const [, year, month, day, hour, minute, second, timezone] = parts;
+    const daysInMonth = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+    if (+month < 1 || +month > 12 || +day < 1 || +day > daysInMonth ||
+        +hour > 23 || +minute > 59 || +second > 59) return '';
+    const registeredAt = Date.parse(timezone ? value : `${value}+09:00`);
+    const elapsed = now - registeredAt;
+    if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > 7 * 24 * 60 * 60 * 1000) return '';
+    return '<span class="encar-new-listing" title="등록 후 7일 이내 매물" aria-label="등록 후 7일 이내 매물">N</span>';
+  }
+
   // ═══════════════════════════════════════════════════════════════
   // 2. 스토리지
   // ═══════════════════════════════════════════════════════════════
@@ -507,6 +523,7 @@
     badge.innerHTML = `
       <div class="encar-score-grade">${scoreResult.grade}</div>
       <div class="encar-score-number">${scoreResult.total}점</div>
+      ${createNewListingMarker(fullData.firstAdvertisedDateTime)}
     `;
 
     // ── 툴팁 상세 정보 계산 ──

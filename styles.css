@@ -42,6 +42,25 @@
   z-index: 100000;
 }
 
+/* 등록 후 7일 이내 매물: 왼쪽 AI 캐시 표시와 겹치지 않도록 오른쪽 배치 */
+.encar-new-listing {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: #e53935;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8);
+}
+
 /* 등급 */
 .encar-score-grade {
   font-size: 22px;
