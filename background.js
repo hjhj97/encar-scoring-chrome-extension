@@ -39,30 +39,48 @@ async function activityFetch(url, html = false) {
 async function fetchTradeActivity(carId) {
   const vehicle = await activityFetch(`https://api.encar.com/v1/readside/vehicle/${carId}`);
   const c = vehicle.category;
-  const year = String(c?.yearMonth || '').slice(0, 4);
-  if (!/^\d{4}$/.test(year) || !c.modelName || !c.gradeName) throw new Error('차량 조건 확인 불가');
+  if (!c?.manufacturerCd || !c.modelCd || !c.gradeCd || !c.modelName || !c.gradeName) {
+    throw new Error('차량 조건 확인 불가');
+  }
   const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
   const end = formatLocalDate(today);
-  today.setDate(today.getDate() - 89);
+  today.setDate(today.getDate() - 29);
   const start = formatLocalDate(today);
-  const key = JSON.stringify([c.manufacturerCd, c.modelCd, c.gradeCd, c.gradeDetailCd, year, end]);
+  const key = JSON.stringify(['all-years-30d', c.manufacturerCd, c.modelCd, c.gradeCd, c.gradeDetailCd, end]);
   const cached = activityCache.get(key);
   if (cached && cached.expires > Date.now()) return cached.promise;
   const promise = (async () => {
     const actualId = String(vehicle.vehicleId || carId);
+    // carid 조회는 해당 차량의 등록연도로 제한된다. 코드만 확인한 뒤 연식 없는 검색으로 전환한다.
+    const seedUrl = new URL(SOLD_OUT_URL);
+    seedUrl.searchParams.set('method', 'soldoutCars');
+    seedUrl.searchParams.set('carTypeCd', '1');
+    seedUrl.searchParams.set('carid', actualId);
+    const seed = parseSoldOutPage(await activityFetch(seedUrl, true));
+    const expected = seed.filters;
+    const sameTrim = filters => filters.manufacturerCd === c.manufacturerCd &&
+      filters.modelGroupCd === c.modelGroupCd && filters.modelCd === c.modelCd &&
+      filters.gradeCd === c.gradeCd && filters.gradeDetailCd === (c.gradeDetailCd || '');
+    if (seed.requestedCarId !== actualId || !sameTrim(expected) || !expected.gradeGroupCd) {
+      throw new Error('판매완료 검색 조건 확인 불가');
+    }
     let sold = 0, soldComplete = false, previousDate = '9999/99/99';
     const pageSignatures = new Set();
     for (let page = 1; page <= 20; page++) {
       const url = new URL(SOLD_OUT_URL);
-      Object.entries({method: 'soldoutCars', carTypeCd: '1', carid: actualId, pagenum: String(page)})
+      Object.entries({
+        method: 'soldoutCars', carTypeCd: '1', carType: c.domestic === true ? 'kor' : 'for',
+        mnfccd: expected.manufacturerCd, mdlgroupcd: expected.modelGroupCd,
+        mdlcd: expected.modelCd, headfiltercd: expected.gradeGroupCd,
+        clsheadcd: expected.gradeCd, clsdetailcd: expected.gradeDetailCd,
+        styear: '', endyear: '', pagenum: String(page)
+      })
         .forEach(([name, value]) => url.searchParams.set(name, value));
       const html = await activityFetch(url, true);
       const parsed = parseSoldOutPage(html), f = parsed.filters;
-      if (parsed.requestedCarId !== actualId || f.manufacturerCd !== c.manufacturerCd ||
-          f.modelCd !== c.modelCd || f.gradeCd !== c.gradeCd ||
-          f.gradeDetailCd !== (c.gradeDetailCd || '') ||
-          f.startYearMonth !== `${year}01` || f.endYearMonth !== `${year}12` ||
-          !/class=["'][^"']*part\s+result[^"']*["']/i.test(html)) {
+      if (!sameTrim(f) || f.gradeGroupCd !== expected.gradeGroupCd ||
+          f.startYearMonth !== '' || f.endYearMonth !== '' ||
+          !/class=["'][^"']*part\s+result[^"']*["'][\s\S]*?<strong>\s*[\d,]+/i.test(html)) {
         throw new Error('판매완료 검색 조건 확인 불가');
       }
       const dates = [...html.matchAll(/<td\b[^>]*class=["'][^"']*\bfdt\b[^"']*["'][^>]*>\s*(\d{4}\/\d{2}\/\d{2})/gi)].map(m => m[1]);
@@ -78,10 +96,10 @@ async function fetchTradeActivity(carId) {
       if (dates.some(date => date < start) || page * 20 >= parsed.total) { soldComplete = true; break; }
       if (dates.length !== 20) throw new Error('판매완료 페이지 누락');
     }
-    // 모델/연도 후보를 모두 받은 뒤 정확한 트림과 중복 광고를 로컬에서 필터링한다.
+    // 연식 제한 없이 같은 모델 세대 후보를 받고 정확한 트림과 중복 광고를 필터링한다.
     if (!c.modelGroupName || /[.\r\n]/.test(c.modelGroupName)) throw new Error('검색 모델 그룹 확인 불가');
     const modelFilter = /[.\r\n]/.test(c.modelName) ? '' : `_.Model.${c.modelName}.`;
-    const q = `(And.Hidden.N._.ModelGroup.${c.modelGroupName}.${modelFilter}_.Year.range(${year}01..${year}12).)`;
+    const q = `(And.Hidden.N._.ModelGroup.${c.modelGroupName}.${modelFilter})`;
     const ids = new Set();
     let total = Infinity, loaded = 0;
     for (let offset = 0; offset < total && offset < 5000; offset += 500) {
@@ -93,14 +111,14 @@ async function fetchTradeActivity(carId) {
       total = data.Count;
       loaded += data.SearchResults.length;
       for (const row of data.SearchResults) {
-        if (row.Model === c.modelName && row.Badge === c.gradeName && String(row.Year).slice(0, 4) === year &&
+        if (row.Model === c.modelName && row.Badge === c.gradeName &&
             (!c.gradeDetailName || c.gradeDetailName === '없음' || row.BadgeDetail === c.gradeDetailName) &&
             row.ServiceCopyCar !== 'DUPLICATION' && row.Id) ids.add(String(row.Id));
       }
       if (!data.SearchResults.length && offset < total) throw new Error('현재 매물 페이지 누락');
     }
     return { sold, active: ids.size, soldComplete, activeComplete: loaded >= total,
-      start, end, scope: `${c.modelName} ${c.gradeName} ${c.gradeDetailName || ''} · ${year}년 등록`,
+      start, end, scope: `${[c.modelName, c.gradeName, c.gradeDetailName].filter(Boolean).join(' ')} · 전체 연식`,
       fetchedAt: Date.now() };
   })();
   if (activityCache.size > 100) activityCache.delete(activityCache.keys().next().value);

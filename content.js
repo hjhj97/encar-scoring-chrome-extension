@@ -898,7 +898,7 @@
         <div class="encar-depreciation-forecast encar-loading" data-encar-depreciation-forecast>감가곡선 계산 중…</div>
         <div class="encar-tooltip-detail">출고 ${carAgeYears.toFixed(1)}년 · ${depreciationTotalText}</div>
       </section>` : ''}
-      ${canAnalyzeSoldOut ? '<section class="encar-trade-activity"><div class="encar-tooltip-row"><span>📊 거래 현황</span><span>최근 90일</span></div><div class="encar-loading" data-encar-activity-main>거래 현황 조회 중…</div><div data-encar-activity-note></div><div data-encar-activity-scope></div></section>' : ''}
+      ${canAnalyzeSoldOut ? '<section class="encar-trade-activity"><div class="encar-tooltip-row"><span>📊 거래 현황</span><span>최근 30일 · 전체 연식</span></div><div class="encar-loading" data-encar-activity-main>거래 현황 조회 중…</div><div data-encar-activity-note></div><div data-encar-activity-scope></div></section>' : ''}
       <div class="encar-tooltip-row">
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>
@@ -1254,7 +1254,7 @@
         const d = response.data;
         main.className = '';
         const activeText = `현재 판매 중 ${d.active.toLocaleString()}대${d.activeComplete ? '' : ' 이상'}`;
-        const soldText = `최근 90일 판매완료 ${d.sold.toLocaleString()}건${d.soldComplete ? '' : ' 이상'}`;
+        const soldText = `최근 30일 판매완료 ${d.sold.toLocaleString()}건${d.soldComplete ? '' : ' 이상'}`;
         const total = d.active + d.sold;
         const complete = d.activeComplete && d.soldComplete;
         const activePercent = total > 0 ? d.active / total * 100 : 0;
@@ -1262,22 +1262,18 @@
         // 부분 집계는 실제 비율을 알 수 없으므로 비율 막대를 그리지 않는다.
         main.innerHTML = complete && total > 0
           ? `<svg class="encar-trade-ratio" viewBox="0 0 100 4" preserveAspectRatio="none" role="img" aria-label="${activeText} (${activePercent.toFixed(1)}%), ${soldText} (${soldPercent.toFixed(1)}%)">
-              <title>현재 재고와 최근 90일 판매완료 건수의 상대 비율이며 판매확률이 아닙니다.</title>
+              <title>전체 연식의 현재 재고와 최근 30일 판매완료 건수의 상대 비율이며 판매확률이 아닙니다.</title>
               <rect width="${activePercent}" height="4" fill="#42A5F5" />
               <rect x="${activePercent}" width="${soldPercent}" height="4" fill="#EF5350" />
             </svg>`
           : `<div class="encar-trade-ratio-empty">${complete ? '비교할 매물 없음' : '집계 일부 · 비율 표시 불가'}</div>`;
         note.innerHTML = `<div class="encar-trade-legend"><span class="encar-trade-active">${activeText}${complete && total > 0 ? ` · ${activePercent.toFixed(1)}%` : ''}</span><span class="encar-trade-sold">${soldText}${complete && total > 0 ? ` · ${soldPercent.toFixed(1)}%` : ''}</span></div>`;
-        if (!d.soldComplete || !d.activeComplete) scope.textContent = '재고 소진 추정 — 집계 일부';
-        else if (d.sold === 0) scope.textContent = '재고 소진 추정 — 판매완료 없음';
-        else if (d.active === 0) scope.textContent = '재고 소진 추정 — 현재 매물 없음';
-        else if (d.sold < 10) scope.textContent = '재고 소진 추정 — 표본 부족';
-        else {
-          const days = d.active * 90 / d.sold;
-          scope.textContent = `재고 소진 추정 ${days < 1 ? '1일 미만' : `약 ${Math.round(days).toLocaleString()}일`}`;
-        }
-        scope.title = '현재 매물 수 × 90 ÷ 최근 90일 판매완료 건수. 신규 유입 없이 같은 판매 속도가 유지된다는 가정이며, 개별 차량의 예상 판매 기간이 아닙니다. 판매완료 기록의 중복 및 양쪽 판매 유형의 일치 여부는 검증되지 않았습니다.';
-        clipboardExtras.activity = '거래 현황: ' + activeText + '\n' + soldText + '\n' + scope.textContent + `\n${d.scope} · ${d.start}~${d.end}` + '\n주의: ' + scope.title;
+        const totalText = `매물 합계 ${total.toLocaleString()}건${complete ? '' : ' 이상 · 집계 일부'}`;
+        const totalHelp = '동일 모델 세대·세부 트림의 모든 연식을 합산합니다. 매물 합계는 현재 판매 중 + 최근 30일 판매완료 기록이며 신규 등록 대수가 아닙니다. 재등록·중복 기록으로 고유 차량 수와 다를 수 있습니다.';
+        scope.textContent = totalText;
+        scope.title = totalHelp;
+        clipboardExtras.activity = ['거래 현황: ' + activeText, soldText,
+          totalText, `${d.scope} · ${d.start}~${d.end}`, `주의: ${totalHelp}`].join('\n');
         refreshClipboardText();
         activityLoadedAt = Date.now();
       } catch (error) {
