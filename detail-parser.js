@@ -818,18 +818,18 @@ const DetailParser = (() => {
         candidates.map(r => fetchScoreCarData(r.Id, { priority: true }))
       );
 
-      const scores = [];
+      // 딜러 매물 데이터를 함께 넘겨 화면에서 현재 사용자 가중치로 평균을 다시 계산할 수 있게 한다.
+      const cars = [];
       for (const settled of carDataList) {
         if (settled.status !== 'fulfilled' || !settled.value) continue;
         const { _userId, ...carData } = settled.value;
-        const result = EncarScoring.calculateScore(carData, DEFAULT_WEIGHTS);
-        scores.push(result.total);
+        cars.push(carData);
       }
 
-      if (scores.length === 0) return null;
-      const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
-      console.log(`[EncarScore] 딜러(${userId}) 최근 ${scores.length}개 평균: ${avg}점`);
-      return { avg, count: scores.length };
+      if (cars.length === 0) return null;
+      const avg = Math.round(cars.reduce((sum, car) => sum + EncarScoring.calculateScore(car, DEFAULT_WEIGHTS).total, 0) / cars.length);
+      console.log(`[EncarScore] 딜러(${userId}) 최근 ${cars.length}개 평균(기본 가중치): ${avg}점`);
+      return { avg, count: cars.length, cars };
     } catch (err) {
       console.warn('[EncarScore] 딜러 평균점수 조회 실패:', err);
       return null;

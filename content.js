@@ -548,7 +548,14 @@
             hasRentalHistory = false,
             firstAdvertisedDateTime = null,
             dealerJoinedDatetime = null, dealerTotalSales = 0,
-            dealerAvgScore = null, dealerName = '', dealerFirmName = '' } = fullData;
+            dealerAvgScore: dealerAvgSource = null, dealerName = '', dealerFirmName = '' } = fullData;
+    // 딜러 평균은 저장된 딜러 매물 데이터를 현재 사용자 가중치로 다시 채점한다.
+    const dealerAvgScore = dealerAvgSource?.cars?.length
+      ? {
+          avg: Math.round(dealerAvgSource.cars.reduce((sum, car) => sum + EncarScoring.calculateScore(car, w).total, 0) / dealerAvgSource.cars.length),
+          count: dealerAvgSource.cars.length
+        }
+      : dealerAvgSource;
     const registedAgo = formatRelativeTime(firstAdvertisedDateTime);
     const soldOutLookupId = actualCarId || carId;
     const canAnalyzeSoldOut = Boolean(soldOutLookupId) && isDetailPage();
@@ -1515,7 +1522,50 @@
    * 기본 배지는 즉시 표시하고, 비교 매물 점수는 백그라운드에서 채운 뒤
    * 같은 위치의 배지를 새 차트로 교체한다.
    */
-  async function enrichBadgeWithMarketScores(badge, scoreResult, cardData, weights, fullData, config) {
+  // 화면에 표시한 매물마다 채점에 쓴 데이터를 기억해 두고,
+  // 팝업에서 가중치가 바뀌면 데이터를 다시 받지 않고 즉시 다시 채점한다.
+  const DETAIL_BADGE_STYLE = '; position: fixed !important; bottom: 24px; right: 24px; width: 72px; height: 72px; z-index: 99999;';
+  const scoredEntries = new Set(); // { container, cardData, fullData, isDetail, badge }
+  let rescoreRevision = 0;
+
+  /** 매물 기록의 점수를 계산해 배지를 새로 그리거나 교체한다. */
+  function renderScoreBadge(entry, weights) {
+    const scoreResult = EncarScoring.calculateScore(entry.fullData, weights);
+    const badge = createScoreBadge(scoreResult, entry.cardData, weights, entry.fullData);
+    if (entry.isDetail) badge.style.cssText += DETAIL_BADGE_STYLE;
+    if (entry.badge?.isConnected) {
+      entry.badge.dispatchEvent(new Event('mouseleave')); // 열린 툴팁 닫기
+      entry.badge.replaceWith(badge);
+    } else {
+      entry.container.appendChild(badge);
+    }
+    entry.badge = badge;
+    if (!entry.isDetail) entry.container.dataset.encarScore = scoreResult.total;
+    enrichBadgeWithMarketScores(entry, badge, scoreResult, weights);
+    return scoreResult;
+  }
+
+  /** 가중치가 바뀌면 화면의 모든 배지를 다시 채점하고 최소 점수 필터도 다시 적용한다. */
+  async function rescoreAll(weights) {
+    const revision = ++rescoreRevision;
+    const minScore = parseInt(await getStoredMinScore(), 10) || 0;
+    // 저장소 콜백 순서가 뒤바뀌어도 마지막으로 저장한 배점만 화면에 반영한다.
+    if (revision !== rescoreRevision) return;
+    for (const entry of scoredEntries) {
+      if (!entry.container.isConnected) {
+        scoredEntries.delete(entry);
+        continue;
+      }
+      const scoreResult = renderScoreBadge(entry, weights);
+      if (!entry.isDetail) {
+        entry.container.style.display = minScore > 0 && scoreResult.total < minScore ? 'none' : '';
+      }
+    }
+    console.log(`[EncarScore] 가중치 변경 → ${scoredEntries.size}개 매물 다시 채점`);
+  }
+
+  async function enrichBadgeWithMarketScores(entry, badge, scoreResult, weights) {
+    const { fullData, cardData } = entry;
     const market = fullData.marketPriceData;
     if (!market?.items?.length || market.scoresLoaded) return;
 
@@ -1523,14 +1573,15 @@
       const scoredMarket = await DetailParser.scoreMarketItems(
         market,
         weights,
-        config,
+        {},
         {
           carId: fullData.carId,
           score: scoreResult.total,
           yearlyMarketData: fullData.yearlyMarketData
         }
       );
-      if (!badge.isConnected) return;
+      // 그사이 가중치가 바뀌어 배지를 다시 그렸다면 오래된 결과로 덮어쓰지 않는다.
+      if (!badge.isConnected || entry.badge !== badge) return;
 
       const updatedBadge = createScoreBadge(
         scoreResult,
@@ -1543,6 +1594,7 @@
       updatedBadge.style.cssText = badge.style.cssText;
       badge.dispatchEvent(new Event('mouseleave'));
       badge.replaceWith(updatedBadge);
+      entry.badge = updatedBadge;
     } catch (error) {
       console.warn('[EncarScore] 가격 구간 평균점수 계산 실패:', error);
     }
@@ -1567,6 +1619,7 @@
     rootMargin: '200px 0px',
     threshold: 0.1
   });
+
 
   async function processCard(cardEl) {
     const cardData = extractCardData(cardEl);
@@ -1597,24 +1650,11 @@
       // 사용자 가중치 불러오기
       const weights = await getStoredWeights();
 
-      // 점수 계산
-      const scoreResult = EncarScoring.calculateScore(fullData, weights);
-
-      // 로딩 배지 제거 → 점수 배지 표시
+      // 로딩 배지 제거 → 점수 배지 표시 (점수는 컨테이너에도 저장해 필터링에 사용)
       loadingBadge.remove();
-      const scoreBadge = createScoreBadge(scoreResult, cardData, weights, fullData);
-      parentEl.appendChild(scoreBadge);
-      enrichBadgeWithMarketScores(
-        scoreBadge,
-        scoreResult,
-        cardData,
-        weights,
-        fullData,
-        {}
-      );
-
-      // 점수를 컨테이너에 저장 (필터링에 사용)
-      parentEl.dataset.encarScore = scoreResult.total;
+      const entry = { container: parentEl, cardData, fullData, isDetail: false, badge: null };
+      const scoreResult = renderScoreBadge(entry, weights);
+      scoredEntries.add(entry);
 
       // 현재 필터 조건 적용
       const storedMin = parseInt(await getStoredMinScore(), 10) || 0;
@@ -1644,7 +1684,7 @@
     await delay(1500); // React 렌더링 대기
 
     const loadingBadge = createLoadingBadge();
-    loadingBadge.style.cssText += '; position: fixed !important; bottom: 24px; right: 24px; width: 72px; height: 72px; z-index: 99999;';
+    loadingBadge.style.cssText += DETAIL_BADGE_STYLE;
     document.body.appendChild(loadingBadge);
 
     try {
@@ -1655,20 +1695,11 @@
 
       const fullData = { carId, modelName, ...detailData };
       const weights = await getStoredWeights();
-      const scoreResult = EncarScoring.calculateScore(fullData, weights);
 
       loadingBadge.remove();
-      const scoreBadge = createScoreBadge(scoreResult, { modelName }, weights, fullData);
-      scoreBadge.style.cssText += '; position: fixed !important; bottom: 24px; right: 24px; width: 72px; height: 72px; z-index: 99999;';
-      document.body.appendChild(scoreBadge);
-      enrichBadgeWithMarketScores(
-        scoreBadge,
-        scoreResult,
-        { modelName },
-        weights,
-        fullData,
-        {}
-      );
+      const entry = { container: document.body, cardData: { modelName }, fullData, isDetail: true, badge: null };
+      const scoreResult = renderScoreBadge(entry, weights);
+      scoredEntries.add(entry);
 
       console.log(`[EncarScore] 상세페이지 ${carId}: ${scoreResult.total}점 (${scoreResult.grade})`, scoreResult.breakdown);
     } catch (error) {
@@ -1759,16 +1790,26 @@
   // 6. 메시지 핸들러 & 초기화
   // ═══════════════════════════════════════════════════════════════
 
+  // 팝업에서 가중치를 저장·초기화하거나 프리셋을 고르면 화면의 점수를 바로 다시 계산한다.
+  chrome.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes.weights) return;
+    rescoreAll(changes.weights.newValue || EncarScoring.DEFAULT_WEIGHTS)
+      .catch(error => console.error('[EncarScore] 배점 변경 재계산 실패:', error));
+  });
+
   chrome.runtime?.onMessage?.addListener((message, sender, sendResponse) => {
     if (message.type === 'RESCAN') {
       processedCards.clear();
+      scoredEntries.clear();
       document.querySelectorAll('.encar-score-badge').forEach(el => el.remove());
       // 필터 조건도 리셋
       document.querySelectorAll('[data-encar-score]').forEach(el => {
         el.removeAttribute('data-encar-score');
         el.style.display = '';
       });
-      scanAndProcess();
+      // 상세 페이지에는 목록 카드가 없으므로 상세 배지를 다시 만든다.
+      if (isDetailPage()) processDetailPage();
+      else scanAndProcess();
       sendResponse({ success: true });
     }
     if (message.type === 'GET_STATUS') {

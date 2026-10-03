@@ -376,13 +376,18 @@ async function fetchSoldOutYearlyAverages(carId, yearReferences, carType, broade
   return points.length > 0 ? { points } : null;
 }
 
-// 설치 시 기본 설정 (DEFAULT_WEIGHTS는 constants.js에서 로드)
+// 최초 설치/업데이트 때 없는 설정만 보충한다. 저장한 배점과 필터를 초기화하지 않는다.
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({
-    weights: DEFAULT_WEIGHTS,
-    minScore: 0
+  chrome.storage.local.get(['weights', 'minScore'], (stored) => {
+    if (chrome.runtime.lastError) {
+      console.warn('[EncarScore] 저장된 설정 확인 실패:', chrome.runtime.lastError.message);
+      return;
+    }
+    const missing = {};
+    if (stored.weights == null) missing.weights = DEFAULT_WEIGHTS;
+    if (stored.minScore == null) missing.minScore = 0;
+    if (Object.keys(missing).length > 0) chrome.storage.local.set(missing);
   });
-  console.log('[EncarScore] 익스텐션 설치 완료');
 });
 
 // 판매완료 페이지는 EUC-KR HTML이며 CORS 대상이므로 서비스 워커에서 대신 조회한다.

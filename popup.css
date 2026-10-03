@@ -111,6 +111,24 @@ body {
 }
 
 /* ---- Buttons ---- */
+.weights-save-status {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #81c784;
+  overflow-wrap: anywhere;
+}
+
+.weights-save-status.is-error {
+  color: #ff8a80;
+}
+
+button:disabled,
+input:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .btn-primary {
   width: 100%;
   padding: 12px;
