@@ -368,7 +368,8 @@ const DetailParser = (() => {
     // 용도 변경/렌트 이력
     const useHistory = data.carInfoUse1s ?? [];
     const hasRentalHistory = useHistory.some(code => code === '3' || code === '4');
-    const hasUsageChange = useHistory.length > 1;
+    // 같은 용도 코드가 반복된 기록은 변경이 아니다. 원본은 보존하고 서로 다른 코드만 센다.
+    const hasUsageChange = new Set(useHistory).size > 1;
 
     // 정보제공 불가능기간 (notJoinDate1~5 중 하나라도 있으면 true)
     const unavailablePeriods = [
