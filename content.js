@@ -550,12 +550,14 @@
             dealerJoinedDatetime = null, dealerTotalSales = 0,
             dealerAvgScore: dealerAvgSource = null, dealerName = '', dealerFirmName = '' } = fullData;
     // 딜러 평균은 저장된 딜러 매물 데이터를 현재 사용자 가중치로 다시 채점한다.
-    const dealerAvgScore = dealerAvgSource?.cars?.length
+    const dealerAverage = source => (source?.cars?.length
       ? {
-          avg: Math.round(dealerAvgSource.cars.reduce((sum, car) => sum + EncarScoring.calculateScore(car, w).total, 0) / dealerAvgSource.cars.length),
-          count: dealerAvgSource.cars.length
+          avg: Math.round(source.cars.reduce((sum, car) => sum + EncarScoring.calculateScore(car, w).total, 0) / source.cars.length),
+          count: source.cars.length
         }
-      : dealerAvgSource;
+      : source);
+    // 동급매물 시세·딜러 평균은 툴팁을 처음 열 때 받는다 (loadTooltipExtras)
+    const tooltipExtrasLoaded = fullData.tooltipExtrasLoaded === true;
     const registedAgo = formatRelativeTime(firstAdvertisedDateTime);
     // 안내만 보정한다. ownerChangeCount와 원본 타임라인, scoreResult는 변경하지 않는다.
     const ownerEstimate = OwnerHistory.describe(OwnerHistory.estimate(fullData));
@@ -645,270 +647,272 @@
       ? `연식평균 ${yearlyPricePoint.avgPrice.toLocaleString()}만원 · ${yearlyPriceDiffText.replace('동일 연식 ', '')}`
       : price > 0 ? yearlyPriceDiffText : '';
 
-    // 동급매물 시세 정보 (SVG 바)
-    const market = fullData.marketPriceData;
-    let marketDetail = '';
-    if (market && market.median > 0 && price > 0) {
-      const pinColor = yearlyPriceDeviation === null ? '#9E9E9E'
-                     : yearlyPriceDeviation <= -0.05 ? '#4CAF50'
-                     : yearlyPriceDeviation >= 0.15  ? '#F44336'
-                     : yearlyPriceDeviation >= 0.05  ? '#FF9800'
-                     : '#FFD700';
-      const diffText = yearlyPriceDiffText;
+    // 동급매물 시세 정보 (SVG 바). 시세는 툴팁을 처음 열 때 받으므로, 받은 뒤 같은 함수로 이 영역만 다시 그린다.
+    const buildMarketDetail = market => {
+      let marketDetail = '';
+      if (market && market.median > 0 && price > 0) {
+        const pinColor = yearlyPriceDeviation === null ? '#9E9E9E'
+                       : yearlyPriceDeviation <= -0.05 ? '#4CAF50'
+                       : yearlyPriceDeviation >= 0.15  ? '#F44336'
+                       : yearlyPriceDeviation >= 0.05  ? '#FF9800'
+                       : '#FFD700';
+        const diffText = yearlyPriceDiffText;
 
-      const rawItems = Array.isArray(market.items) && market.items.length > 0
-        ? market.items
-        : (Array.isArray(market.prices) ? market.prices.map(p => ({ price: p, grade: '일반' })) : []);
+        const rawItems = Array.isArray(market.items) && market.items.length > 0
+          ? market.items
+          : (Array.isArray(market.prices) ? market.prices.map(p => ({ price: p, grade: '일반' })) : []);
 
-      // 차량 판매가(price) 기준 약 5% 단위로 가격 구간(binStep) 설정
-      const carRefPrice = price > 0 ? price : (market.median || 2000);
-      const rawStep = carRefPrice * 0.05;
-      const binStep = rawStep < 30 ? 20 : (rawStep < 75 ? 50 : Math.max(50, Math.round(rawStep / 50) * 50));
+        // 차량 판매가(price) 기준 약 5% 단위로 가격 구간(binStep) 설정
+        const carRefPrice = price > 0 ? price : (market.median || 2000);
+        const rawStep = carRefPrice * 0.05;
+        const binStep = rawStep < 30 ? 20 : (rawStep < 75 ? 50 : Math.max(50, Math.round(rawStep / 50) * 50));
 
-      // 매물 가격 목록 (현재 차량 가격 포함)
-      const allPrices = rawItems.map(it => it.price).filter(p => typeof p === 'number' && p > 0);
-      if (price > 0) allPrices.push(price);
+        // 매물 가격 목록 (현재 차량 가격 포함)
+        const allPrices = rawItems.map(it => it.price).filter(p => typeof p === 'number' && p > 0);
+        if (price > 0) allPrices.push(price);
 
-      const minP = Math.min(...allPrices);
-      const maxP = Math.max(...allPrices);
+        const minP = Math.min(...allPrices);
+        const maxP = Math.max(...allPrices);
 
-      // 시작/종료 가격을 binStep 배수로 깔끔하게 정렬 (예: 1900~2000, 2000~2100...)
-      let startPrice = Math.floor(minP / binStep) * binStep;
-      let endPrice = Math.ceil(maxP / binStep) * binStep;
-      if (endPrice <= startPrice) endPrice = startPrice + binStep;
+        // 시작/종료 가격을 binStep 배수로 깔끔하게 정렬 (예: 1900~2000, 2000~2100...)
+        let startPrice = Math.floor(minP / binStep) * binStep;
+        let endPrice = Math.ceil(maxP / binStep) * binStep;
+        if (endPrice <= startPrice) endPrice = startPrice + binStep;
 
-      let numBins = Math.round((endPrice - startPrice) / binStep);
-      // 시각적 균형을 위해 최소 6개 구간 확보
-      while (numBins < 6) {
-        startPrice = Math.max(0, startPrice - binStep);
-        endPrice += binStep;
-        numBins = Math.round((endPrice - startPrice) / binStep);
-      }
-      // 구간이 너무 많을 경우(이상치 등) 최대 16구간으로 제한
-      if (numBins > 16) {
-        const sortedP = [...allPrices].sort((a, b) => a - b);
-        const p05 = sortedP[Math.floor(sortedP.length * 0.05)];
-        const p95 = sortedP[Math.floor(sortedP.length * 0.95)];
-        startPrice = Math.floor(Math.min(price, p05) / binStep) * binStep;
-        endPrice = Math.ceil(Math.max(price, p95) / binStep) * binStep;
-        if (endPrice <= startPrice) endPrice = startPrice + binStep * 6;
-        numBins = Math.round((endPrice - startPrice) / binStep);
-      }
+        let numBins = Math.round((endPrice - startPrice) / binStep);
+        // 시각적 균형을 위해 최소 6개 구간 확보
+        while (numBins < 6) {
+          startPrice = Math.max(0, startPrice - binStep);
+          endPrice += binStep;
+          numBins = Math.round((endPrice - startPrice) / binStep);
+        }
+        // 구간이 너무 많을 경우(이상치 등) 최대 16구간으로 제한
+        if (numBins > 16) {
+          const sortedP = [...allPrices].sort((a, b) => a - b);
+          const p05 = sortedP[Math.floor(sortedP.length * 0.05)];
+          const p95 = sortedP[Math.floor(sortedP.length * 0.95)];
+          startPrice = Math.floor(Math.min(price, p05) / binStep) * binStep;
+          endPrice = Math.ceil(Math.max(price, p95) / binStep) * binStep;
+          if (endPrice <= startPrice) endPrice = startPrice + binStep * 6;
+          numBins = Math.round((endPrice - startPrice) / binStep);
+        }
 
-      // 이상치 때문에 표시 범위를 줄인 경우 범위 밖 매물을 양 끝 bin에 억지로 넣지 않는다.
-      const chartItems = rawItems.filter(item =>
-        typeof item.price === 'number' && item.price >= startPrice && item.price <= endPrice
-      );
+        // 이상치 때문에 표시 범위를 줄인 경우 범위 밖 매물을 양 끝 bin에 억지로 넣지 않는다.
+        const chartItems = rawItems.filter(item =>
+          typeof item.price === 'number' && item.price >= startPrice && item.price <= endPrice
+        );
 
-      // 가격을 X 좌표(10 ~ 190)로 변환하는 함수
-      const calcPriceX = (p) => {
-        const pct = (p - startPrice) / (endPrice - startPrice);
-        const clampedPct = Math.max(0, Math.min(1, pct));
-        return 10 + clampedPct * 180;
-      };
-
-      const priceXNum = calcPriceX(price);
-      const priceX    = priceXNum.toFixed(1);
-
-      // 등급별 색상 팔레트
-      const GRADE_COLORS = [
-        '#64B5F6', // 하늘/파랑
-        '#4DB6AC', // 청록/민트
-        '#81C784', // 연초록
-        '#FFD54F', // 골드/노랑
-        '#FFB74D', // 주황
-        '#BA68C8', // 보라
-        '#F06292'  // 핑크
-      ];
-
-      // 고유 등급 목록
-      const uniqueGrades = [...new Set(chartItems.map(it => it.grade || '일반').filter(Boolean))];
-      const gradeColorMap = {};
-      uniqueGrades.forEach((g, idx) => {
-        gradeColorMap[g] = GRADE_COLORS[idx % GRADE_COLORS.length];
-      });
-
-      // --- 2D 히스토그램 & 정규분포 곡선 데이터 계산 ---
-      const binWidth = 180 / numBins;
-      const barWidth = Math.max(4, binWidth - 2.5);
-      const baselineY = 47;
-      const maxBarHeight = 29; // 바 최대 높이
-
-      const bins = Array.from({ length: numBins }, (_, i) => {
-        const lo = startPrice + i * binStep;
-        const hi = lo + binStep;
-        return {
-          index: i,
-          rangeLabel: `${lo}~${hi}`,
-          startX: 10 + i * binWidth,
-          centerX: 10 + (i + 0.5) * binWidth,
-          items: []
+        // 가격을 X 좌표(10 ~ 190)로 변환하는 함수
+        const calcPriceX = (p) => {
+          const pct = (p - startPrice) / (endPrice - startPrice);
+          const clampedPct = Math.max(0, Math.min(1, pct));
+          return 10 + clampedPct * 180;
         };
-      });
 
-      chartItems.forEach(it => {
-        const binIdx = Math.min(numBins - 1, Math.max(0, Math.floor((it.price - startPrice) / binStep)));
-        bins[binIdx].items.push(it);
-      });
+        const priceXNum = calcPriceX(price);
+        const priceX    = priceXNum.toFixed(1);
 
-      // 상세 조회가 끝난 매물의 점수를 가격 구간별로 평균낸다.
-      bins.forEach(bin => {
-        const scores = bin.items
-          .map(item => item.score)
-          .filter(score => Number.isFinite(score));
-        bin.scoredCount = scores.length;
-        bin.avgScore = scores.length > 0
-          ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
-          : null;
-      });
+        // 등급별 색상 팔레트
+        const GRADE_COLORS = [
+          '#64B5F6', // 하늘/파랑
+          '#4DB6AC', // 청록/민트
+          '#81C784', // 연초록
+          '#FFD54F', // 골드/노랑
+          '#FFB74D', // 주황
+          '#BA68C8', // 보라
+          '#F06292'  // 핑크
+        ];
 
-      const maxBinCount = Math.max(1, ...bins.map(b => b.items.length));
-
-      // 히스토그램 바(Stacked Rects) 생성 (등급별 스택)
-      const histogramBarsSvg = bins.map(b => {
-        if (b.items.length === 0) return '';
-        const barX = (b.centerX - barWidth / 2).toFixed(1);
-        const sortedItems = [...b.items].sort((a, b) => {
-          const gA = a.grade || '';
-          const gB = b.grade || '';
-          return gA.localeCompare(gB);
+        // 고유 등급 목록
+        const uniqueGrades = [...new Set(chartItems.map(it => it.grade || '일반').filter(Boolean))];
+        const gradeColorMap = {};
+        uniqueGrades.forEach((g, idx) => {
+          gradeColorMap[g] = GRADE_COLORS[idx % GRADE_COLORS.length];
         });
 
-        let currentY = baselineY;
-        return sortedItems.map((it, idx) => {
-          const segHeight = (1 / maxBinCount) * maxBarHeight;
-          currentY -= segHeight;
-          const gKey = it.grade || '일반';
-          const col = gradeColorMap[gKey] || 'rgba(255,255,255,0.45)';
-          const isTop = idx === sortedItems.length - 1;
-          const rxAttr = isTop ? 'rx="2" ry="2"' : '';
-          const avgText = b.avgScore === null ? '' : ` · 평균 ${b.avgScore}점`;
-          return `<rect x="${barX}" y="${currentY.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${segHeight.toFixed(1)}" fill="${col}" opacity="0.85" ${rxAttr}><title>${b.rangeLabel}만원 (${b.items.length}대${avgText})</title></rect>`;
+        // --- 2D 히스토그램 & 정규분포 곡선 데이터 계산 ---
+        const binWidth = 180 / numBins;
+        const barWidth = Math.max(4, binWidth - 2.5);
+        const baselineY = 47;
+        const maxBarHeight = 29; // 바 최대 높이
+
+        const bins = Array.from({ length: numBins }, (_, i) => {
+          const lo = startPrice + i * binStep;
+          const hi = lo + binStep;
+          return {
+            index: i,
+            rangeLabel: `${lo}~${hi}`,
+            startX: 10 + i * binWidth,
+            centerX: 10 + (i + 0.5) * binWidth,
+            items: []
+          };
+        });
+
+        chartItems.forEach(it => {
+          const binIdx = Math.min(numBins - 1, Math.max(0, Math.floor((it.price - startPrice) / binStep)));
+          bins[binIdx].items.push(it);
+        });
+
+        // 상세 조회가 끝난 매물의 점수를 가격 구간별로 평균낸다.
+        bins.forEach(bin => {
+          const scores = bin.items
+            .map(item => item.score)
+            .filter(score => Number.isFinite(score));
+          bin.scoredCount = scores.length;
+          bin.avgScore = scores.length > 0
+            ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)
+            : null;
+        });
+
+        const maxBinCount = Math.max(1, ...bins.map(b => b.items.length));
+
+        // 히스토그램 바(Stacked Rects) 생성 (등급별 스택)
+        const histogramBarsSvg = bins.map(b => {
+          if (b.items.length === 0) return '';
+          const barX = (b.centerX - barWidth / 2).toFixed(1);
+          const sortedItems = [...b.items].sort((a, b) => {
+            const gA = a.grade || '';
+            const gB = b.grade || '';
+            return gA.localeCompare(gB);
+          });
+
+          let currentY = baselineY;
+          return sortedItems.map((it, idx) => {
+            const segHeight = (1 / maxBinCount) * maxBarHeight;
+            currentY -= segHeight;
+            const gKey = it.grade || '일반';
+            const col = gradeColorMap[gKey] || 'rgba(255,255,255,0.45)';
+            const isTop = idx === sortedItems.length - 1;
+            const rxAttr = isTop ? 'rx="2" ry="2"' : '';
+            const avgText = b.avgScore === null ? '' : ` · 평균 ${b.avgScore}점`;
+            return `<rect x="${barX}" y="${currentY.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${segHeight.toFixed(1)}" fill="${col}" opacity="0.85" ${rxAttr}><title>${b.rangeLabel}만원 (${b.items.length}대${avgText})</title></rect>`;
+          }).join('');
         }).join('');
-      }).join('');
 
-      // 정규분포 느낌의 부드러운 곡선(Bell curve) 생성
-      const curvePoints = [
-        { x: 10, y: baselineY },
-        ...bins.map(b => {
-          const h = (b.items.length / maxBinCount) * maxBarHeight;
-          return { x: b.centerX, y: baselineY - h };
-        }),
-        { x: 190, y: baselineY }
-      ];
+        // 정규분포 느낌의 부드러운 곡선(Bell curve) 생성
+        const curvePoints = [
+          { x: 10, y: baselineY },
+          ...bins.map(b => {
+            const h = (b.items.length / maxBinCount) * maxBarHeight;
+            return { x: b.centerX, y: baselineY - h };
+          }),
+          { x: 190, y: baselineY }
+        ];
 
-      const getSplinePath = (pts) => {
-        if (pts.length < 2) return '';
-        let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
-        for (let i = 0; i < pts.length - 1; i++) {
-          const p0 = pts[i];
-          const p1 = pts[i + 1];
-          const mx = (p0.x + p1.x) / 2;
-          d += ` C ${mx.toFixed(1)} ${p0.y.toFixed(1)}, ${mx.toFixed(1)} ${p1.y.toFixed(1)}, ${p1.x.toFixed(1)} ${p1.y.toFixed(1)}`;
-        }
-        return d;
-      };
+        const getSplinePath = (pts) => {
+          if (pts.length < 2) return '';
+          let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+          for (let i = 0; i < pts.length - 1; i++) {
+            const p0 = pts[i];
+            const p1 = pts[i + 1];
+            const mx = (p0.x + p1.x) / 2;
+            d += ` C ${mx.toFixed(1)} ${p0.y.toFixed(1)}, ${mx.toFixed(1)} ${p1.y.toFixed(1)}, ${p1.x.toFixed(1)} ${p1.y.toFixed(1)}`;
+          }
+          return d;
+        };
 
-      const linePath = getSplinePath(curvePoints);
-      const areaPath = `${linePath} L 190 ${baselineY} L 10 ${baselineY} Z`;
+        const linePath = getSplinePath(curvePoints);
+        const areaPath = `${linePath} L 190 ${baselineY} L 10 ${baselineY} Z`;
 
-      // 구간 평균점수(0~100)는 히스토그램 위에 선/점/숫자로 표시한다.
-      // 빈 가격 구간을 가로질러 선이 연결되지 않도록 인접한 점끼리만 잇는다.
-      const scoreTopY = 10;
-      const scoreBottomY = baselineY - 2;
-      const calcScoreY = score => scoreBottomY - (score / 100) * (scoreBottomY - scoreTopY);
-      let previousScorePoint = null;
-      const scoreLineParts = [];
-      const scorePointParts = [];
+        // 구간 평균점수(0~100)는 히스토그램 위에 선/점/숫자로 표시한다.
+        // 빈 가격 구간을 가로질러 선이 연결되지 않도록 인접한 점끼리만 잇는다.
+        const scoreTopY = 10;
+        const scoreBottomY = baselineY - 2;
+        const calcScoreY = score => scoreBottomY - (score / 100) * (scoreBottomY - scoreTopY);
+        let previousScorePoint = null;
+        const scoreLineParts = [];
+        const scorePointParts = [];
 
-      bins.forEach(bin => {
-        if (bin.avgScore === null) {
-          previousScorePoint = null;
-          return;
-        }
+        bins.forEach(bin => {
+          if (bin.avgScore === null) {
+            previousScorePoint = null;
+            return;
+          }
 
-        const point = { x: bin.centerX, y: calcScoreY(bin.avgScore) };
-        if (previousScorePoint) {
-          scoreLineParts.push(
-            `<line x1="${previousScorePoint.x.toFixed(1)}" y1="${previousScorePoint.y.toFixed(1)}" x2="${point.x.toFixed(1)}" y2="${point.y.toFixed(1)}" stroke="rgba(255,255,255,0.9)" stroke-width="1.2" stroke-linecap="round"/>`
-          );
-        }
+          const point = { x: bin.centerX, y: calcScoreY(bin.avgScore) };
+          if (previousScorePoint) {
+            scoreLineParts.push(
+              `<line x1="${previousScorePoint.x.toFixed(1)}" y1="${previousScorePoint.y.toFixed(1)}" x2="${point.x.toFixed(1)}" y2="${point.y.toFixed(1)}" stroke="rgba(255,255,255,0.9)" stroke-width="1.2" stroke-linecap="round"/>`
+            );
+          }
 
-        const scoreGrade = EncarScoring.getGrade(bin.avgScore);
-        const scoreColor = EncarScoring.getGradeColor(scoreGrade);
-        const labelY = Math.max(7, point.y - 3.5);
-        scorePointParts.push(`
-          <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.6" fill="${scoreColor}" stroke="#fff" stroke-width="0.8">
-            <title>${bin.rangeLabel}만원 평균 ${bin.avgScore}점 (${bin.scoredCount}대 분석)</title>
-          </circle>
-          <text x="${point.x.toFixed(1)}" y="${labelY.toFixed(1)}" fill="${scoreColor}" stroke="rgba(20,20,28,0.9)" stroke-width="1.4" paint-order="stroke" text-anchor="middle" font-size="6.5" font-weight="700">${bin.avgScore}</text>`);
-        previousScorePoint = point;
-      });
+          const scoreGrade = EncarScoring.getGrade(bin.avgScore);
+          const scoreColor = EncarScoring.getGradeColor(scoreGrade);
+          const labelY = Math.max(7, point.y - 3.5);
+          scorePointParts.push(`
+            <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.6" fill="${scoreColor}" stroke="#fff" stroke-width="0.8">
+              <title>${bin.rangeLabel}만원 평균 ${bin.avgScore}점 (${bin.scoredCount}대 분석)</title>
+            </circle>
+            <text x="${point.x.toFixed(1)}" y="${labelY.toFixed(1)}" fill="${scoreColor}" stroke="rgba(20,20,28,0.9)" stroke-width="1.4" paint-order="stroke" text-anchor="middle" font-size="6.5" font-weight="700">${bin.avgScore}</text>`);
+          previousScorePoint = point;
+        });
 
-      const averageScoreSvg = `${scoreLineParts.join('')}${scorePointParts.join('')}`;
-      // 신차가 pin (구간 범위 내에 있을 때만 표시)
-      const hasOriginInScale = originPrice > 0 && originPrice >= startPrice && originPrice <= endPrice;
-      const originPinSvg = hasOriginInScale ? `
-          <line x1="${calcPriceX(originPrice).toFixed(1)}" y1="12" x2="${calcPriceX(originPrice).toFixed(1)}" y2="${baselineY}" stroke="rgba(200,200,200,0.5)" stroke-width="1.2" stroke-dasharray="2 2"/>
-          <circle cx="${calcPriceX(originPrice).toFixed(1)}" cy="${baselineY}" r="2.5" fill="rgba(180,180,180,0.6)"/>` : '';
+        const averageScoreSvg = `${scoreLineParts.join('')}${scorePointParts.join('')}`;
+        // 신차가 pin (구간 범위 내에 있을 때만 표시)
+        const hasOriginInScale = originPrice > 0 && originPrice >= startPrice && originPrice <= endPrice;
+        const originPinSvg = hasOriginInScale ? `
+            <line x1="${calcPriceX(originPrice).toFixed(1)}" y1="12" x2="${calcPriceX(originPrice).toFixed(1)}" y2="${baselineY}" stroke="rgba(200,200,200,0.5)" stroke-width="1.2" stroke-dasharray="2 2"/>
+            <circle cx="${calcPriceX(originPrice).toFixed(1)}" cy="${baselineY}" r="2.5" fill="rgba(180,180,180,0.6)"/>` : '';
 
-      // 중앙값 (Median) 점선
-      const medianXNum = calcPriceX(market.median);
-      const medianX    = medianXNum.toFixed(1);
-      const medianIndicatorSvg = `
-          <line x1="${medianX}" y1="12" x2="${medianX}" y2="${baselineY}" stroke="rgba(255,255,255,0.4)" stroke-width="1.2" stroke-dasharray="2 2"/>
-          <circle cx="${medianX}" cy="${baselineY}" r="2" fill="rgba(255,255,255,0.7)"/>`;
+        // 중앙값 (Median) 점선
+        const medianXNum = calcPriceX(market.median);
+        const medianX    = medianXNum.toFixed(1);
+        const medianIndicatorSvg = `
+            <line x1="${medianX}" y1="12" x2="${medianX}" y2="${baselineY}" stroke="rgba(255,255,255,0.4)" stroke-width="1.2" stroke-dasharray="2 2"/>
+            <circle cx="${medianX}" cy="${baselineY}" r="2" fill="rgba(255,255,255,0.7)"/>`;
 
-      // 현재 매물 가격 위치 인디케이터
-      const currentIndicatorSvg = `
-          <line x1="${priceX}" y1="8" x2="${priceX}" y2="${baselineY}" stroke="${pinColor}" stroke-width="2" stroke-linecap="round"/>
-          <circle cx="${priceX}" cy="6" r="4.5" fill="${pinColor}"/>
-          <circle cx="${priceX}" cy="6" r="2" fill="#fff" opacity="0.7"/>
-          <circle cx="${priceX}" cy="${baselineY}" r="3" fill="${pinColor}"/>`;
+        // 현재 매물 가격 위치 인디케이터
+        const currentIndicatorSvg = `
+            <line x1="${priceX}" y1="8" x2="${priceX}" y2="${baselineY}" stroke="${pinColor}" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="${priceX}" cy="6" r="4.5" fill="${pinColor}"/>
+            <circle cx="${priceX}" cy="6" r="2" fill="#fff" opacity="0.7"/>
+            <circle cx="${priceX}" cy="${baselineY}" r="3" fill="${pinColor}"/>`;
 
-      marketDetail = `<div class="encar-price-meter">
-        <div class="encar-price-axis-title">
-          <span>막대: 매물수</span>
-          <span class="encar-price-score-legend"><span class="encar-price-score-dot"></span>평균점수(0~100)</span>
-        </div>
-        <svg class="encar-price-svg" viewBox="0 0 200 55">
-          <defs>
-            <linearGradient id="bellAreaGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="rgba(144, 202, 249, 0.4)" />
-              <stop offset="100%" stop-color="rgba(144, 202, 249, 0.03)" />
-            </linearGradient>
-          </defs>
-          <line x1="10" y1="18" x2="190" y2="18" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2 4"/>
-          <line x1="10" y1="32" x2="190" y2="32" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2 4"/>
+        marketDetail = `<div class="encar-price-meter">
+          <div class="encar-price-axis-title">
+            <span>막대: 매물수</span>
+            <span class="encar-price-score-legend"><span class="encar-price-score-dot"></span>평균점수(0~100)</span>
+          </div>
+          <svg class="encar-price-svg" viewBox="0 0 200 55">
+            <defs>
+              <linearGradient id="bellAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="rgba(144, 202, 249, 0.4)" />
+                <stop offset="100%" stop-color="rgba(144, 202, 249, 0.03)" />
+              </linearGradient>
+            </defs>
+            <line x1="10" y1="18" x2="190" y2="18" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2 4"/>
+            <line x1="10" y1="32" x2="190" y2="32" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="2 4"/>
 
-          <!-- 정규분포 부드러운 배경 영역 & 곡선 -->
-          <path d="${areaPath}" fill="url(#bellAreaGrad)" />
-          <path d="${linePath}" fill="none" stroke="rgba(144, 202, 249, 0.55)" stroke-width="1.5" stroke-linecap="round"/>
+            <!-- 정규분포 부드러운 배경 영역 & 곡선 -->
+            <path d="${areaPath}" fill="url(#bellAreaGrad)" />
+            <path d="${linePath}" fill="none" stroke="rgba(144, 202, 249, 0.55)" stroke-width="1.5" stroke-linecap="round"/>
 
-          <!-- 히스토그램 바 (등급별 스택) -->
-          ${histogramBarsSvg}
+            <!-- 히스토그램 바 (등급별 스택) -->
+            ${histogramBarsSvg}
 
-          <!-- 가격 구간별 평균점수 -->
-          ${averageScoreSvg}
+            <!-- 가격 구간별 평균점수 -->
+            ${averageScoreSvg}
 
-          <!-- X축 기준선 -->
-          <line x1="10" y1="${baselineY}" x2="190" y2="${baselineY}" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" stroke-linecap="round"/>
+            <!-- X축 기준선 -->
+            <line x1="10" y1="${baselineY}" x2="190" y2="${baselineY}" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" stroke-linecap="round"/>
 
-          <!-- 신차가 및 중앙값 가이드라인 -->
-          ${originPinSvg}
-          ${medianIndicatorSvg}
+            <!-- 신차가 및 중앙값 가이드라인 -->
+            ${originPinSvg}
+            ${medianIndicatorSvg}
 
-          <!-- 현재 매물 가격 위치 핀 -->
-          ${currentIndicatorSvg}
-        </svg>
-        <div class="encar-price-meter-labels">
-          <span>${startPrice.toLocaleString()}만</span>
-          <span>중앙값 ${market.median.toLocaleString()}만원 · ${binStep}만 단위</span>
-          <span>${endPrice.toLocaleString()}만</span>
-        </div>
-        <div class="encar-price-diff-text" style="color:${pinColor}">${diffText}</div>
-      </div>`;
-    }
+            <!-- 현재 매물 가격 위치 핀 -->
+            ${currentIndicatorSvg}
+          </svg>
+          <div class="encar-price-meter-labels">
+            <span>${startPrice.toLocaleString()}만</span>
+            <span>중앙값 ${market.median.toLocaleString()}만원 · ${binStep}만 단위</span>
+            <span>${endPrice.toLocaleString()}만</span>
+          </div>
+          <div class="encar-price-diff-text" style="color:${pinColor}">${diffText}</div>
+        </div>`;
+      }
+      return marketDetail;
+    };
     const yearlyMarketDetail = createYearlyMarketChart(fullData.yearlyMarketData, year, originPrice);
     // 연간 평균 주행거리 (출고년월 기준 월단위 계산)
     const { month: registMonth = 0 } = fullData;
@@ -945,6 +949,16 @@
       }
     }
     const dealerFullName = [dealerFirmName, dealerName].filter(Boolean).join(' ') || '판매자';
+    const buildDealerHtml = source => {
+      const dealerAvgScore = dealerAverage(source);
+      return dealerAvgScore ? `
+      <div class="encar-tooltip-divider"></div>
+      <div class="encar-tooltip-row">
+        <span>🏪 ${dealerFullName} 평균</span>
+        <span style="color:${EncarScoring.getGradeColor(EncarScoring.getGrade(dealerAvgScore.avg))};font-weight:600">${dealerAvgScore.avg}점</span>
+      </div>
+      <div class="encar-tooltip-detail">최근 ${dealerAvgScore.count}개 매물 기준</div>` : '';
+    };
     const apiModelName = fullData.modelName || '';
 
     const tooltip = document.createElement('div');
@@ -974,7 +988,9 @@
         <span>${Math.round(scoreResult.breakdown.price)}/${w.price}</span>
       </div>
       ${priceDetail ? `<div class="encar-tooltip-detail">${priceDetail}</div>` : ''}
-      ${marketDetail}
+      <div data-encar-market-slot>${tooltipExtrasLoaded
+        ? buildMarketDetail(fullData.marketPriceData)
+        : '<div class="encar-loading">가격 분포 불러오는 중…</div>'}</div>
       ${yearlyMarketDetail}
       ${canShowDepreciation ? `<section class="encar-depreciation">
         <div class="encar-tooltip-row">
@@ -1006,13 +1022,9 @@
       <div class="encar-tooltip-detail encar-owner-estimate" title="${escapeHtml(ownerEstimate.title)}">${escapeHtml(ownerEstimate.text)}</div>
       ${createOwnerTimeline(fullData)}
       </section>
-      ${dealerAvgScore ? `
-      <div class="encar-tooltip-divider"></div>
-      <div class="encar-tooltip-row">
-        <span>🏪 ${dealerFullName} 평균</span>
-        <span style="color:${EncarScoring.getGradeColor(EncarScoring.getGrade(dealerAvgScore.avg))};font-weight:600">${dealerAvgScore.avg}점</span>
-      </div>
-      <div class="encar-tooltip-detail">최근 ${dealerAvgScore.count}개 매물 기준</div>` : ''}
+      <div data-encar-dealer-slot>${tooltipExtrasLoaded
+        ? buildDealerHtml(dealerAvgSource)
+        : (fullData.dealerUserId ? '<div class="encar-tooltip-divider"></div><div class="encar-loading">딜러 평균 점수 불러오는 중…</div>' : '')}</div>
       ${dealerText ? `<div class="encar-tooltip-detail">${dealerText}</div>` : ''}
     `;
 
@@ -1101,15 +1113,12 @@
       `소유주변경: ${ownerStr}`,
       `${ownerEstimate.text} (원본 이력·점수 유지)`,
     );
-    if (dealerAvgScore) {
-      clipboardLines.push(`${dealerFullName} 평균점수: ${dealerAvgScore.avg}점 (최근 ${dealerAvgScore.count}개 매물)`);
-    }
     if (dealerText) clipboardLines.push(dealerText);
     let clipboardText = clipboardLines.join('\n');
     // 툴팁을 연 뒤 늦게 도착하는 거래 현황·감가 정보는 여기에 모아 복사·AI 분석 텍스트 끝에 붙인다.
     const clipboardExtras = {};
     const refreshClipboardText = () => {
-      clipboardText = [clipboardLines.join('\n'), clipboardExtras.activity, clipboardExtras.depreciation]
+      clipboardText = [clipboardLines.join('\n'), clipboardExtras.dealer, clipboardExtras.activity, clipboardExtras.depreciation]
         .filter(Boolean)
         .join('\n');
     };
@@ -1117,6 +1126,14 @@
       clipboardExtras.depreciation = `감가: ${depreciationTotalText}`;
       refreshClipboardText();
     }
+    const updateDealerClipboard = () => {
+      const dealerAvgScore = dealerAverage(fullData.dealerAvgScore);
+      clipboardExtras.dealer = dealerAvgScore
+        ? `${dealerFullName} 평균점수: ${dealerAvgScore.avg}점 (최근 ${dealerAvgScore.count}개 매물)`
+        : null;
+      refreshClipboardText();
+    };
+    if (tooltipExtrasLoaded) updateDealerClipboard();
 
     // 배지 클릭 시 액션 메뉴 표시
     badge.addEventListener('click', (e) => {
@@ -1217,6 +1234,43 @@
       tooltip.style.right = 'auto';
       tooltip.style.bottom = 'auto';
       tooltip.style.visibility = 'visible';
+    };
+
+    // 툴팁 전용 정보(가격 분포 차트·딜러 평균)는 처음 열 때 받아 해당 영역만 제자리에서 다시 그린다.
+    // 배지를 통째로 바꾸면 열린 툴팁이 닫히므로 영역 단위로 갱신한다.
+    let extrasLoadStarted = false;
+    const loadTooltipExtras = async () => {
+      if (extrasLoadStarted || !carId) return;
+      extrasLoadStarted = true;
+      const marketSlot = tooltip.querySelector('[data-encar-market-slot]');
+      const dealerSlot = tooltip.querySelector('[data-encar-dealer-slot]');
+      try {
+        if (!fullData.tooltipExtrasLoaded) {
+          const extras = await DetailParser.fetchTooltipExtras(carId, fullData.dealerUserId);
+          // 가중치 변경으로 다시 채점할 때도 쓰도록 매물 데이터에 보관한다.
+          Object.assign(fullData, extras, { tooltipExtrasLoaded: true });
+          if (dealerSlot) dealerSlot.innerHTML = buildDealerHtml(fullData.dealerAvgScore);
+          if (marketSlot) marketSlot.innerHTML = buildMarketDetail(fullData.marketPriceData);
+          updateDealerClipboard();
+          requestAnimationFrame(positionTooltip);
+        }
+        // 가격 구간별 평균 점수: 동급 매물을 현재 가중치로 채점해 차트를 다시 그린다.
+        const market = fullData.marketPriceData;
+        if (market?.items?.length && marketSlot) {
+          const scoredMarket = await DetailParser.scoreMarketItems(market, w, {}, {
+            carId: fullData.carId,
+            score: scoreResult.total,
+            yearlyMarketData: fullData.yearlyMarketData
+          });
+          marketSlot.innerHTML = buildMarketDetail(scoredMarket);
+          requestAnimationFrame(positionTooltip);
+        }
+      } catch (error) {
+        extrasLoadStarted = false; // 다음 툴팁 열기에서 다시 시도
+        if (marketSlot) marketSlot.innerHTML = '<div class="encar-tooltip-detail">가격 분포 조회 실패 · 툴팁을 다시 열면 재시도합니다</div>';
+        if (dealerSlot) dealerSlot.innerHTML = '';
+        console.warn('[EncarScore] 툴팁 추가 정보 조회 실패:', error);
+      }
     };
 
     let depreciationLoadStarted = false;
@@ -1396,6 +1450,7 @@
       tooltip.style.display = 'block';
       positionTooltip();
       window.addEventListener('resize', positionTooltip);
+      void loadTooltipExtras();
       void loadTradeActivity();
       void loadDepreciation();
     });
@@ -1404,6 +1459,9 @@
       if (!event.isTrusted) closeTooltip();
       else scheduleTooltipClose();
     });
+
+    // 상세 페이지는 매물이 하나라 검색이 몰리지 않으므로 툴팁 정보를 바로 미리 받는다.
+    if (isDetailPage()) void loadTooltipExtras();
 
     return badge;
   }
@@ -1545,7 +1603,6 @@
     }
     entry.badge = badge;
     if (!entry.isDetail) entry.container.dataset.encarScore = scoreResult.total;
-    enrichBadgeWithMarketScores(entry, badge, scoreResult, weights);
     return scoreResult;
   }
 
@@ -1566,42 +1623,6 @@
       }
     }
     console.log(`[EncarScore] 가중치 변경 → ${scoredEntries.size}개 매물 다시 채점`);
-  }
-
-  async function enrichBadgeWithMarketScores(entry, badge, scoreResult, weights) {
-    const { fullData, cardData } = entry;
-    const market = fullData.marketPriceData;
-    if (!market?.items?.length || market.scoresLoaded) return;
-
-    try {
-      const scoredMarket = await DetailParser.scoreMarketItems(
-        market,
-        weights,
-        {},
-        {
-          carId: fullData.carId,
-          score: scoreResult.total,
-          yearlyMarketData: fullData.yearlyMarketData
-        }
-      );
-      // 그사이 가중치가 바뀌어 배지를 다시 그렸다면 오래된 결과로 덮어쓰지 않는다.
-      if (!badge.isConnected || entry.badge !== badge) return;
-
-      const updatedBadge = createScoreBadge(
-        scoreResult,
-        cardData,
-        weights,
-        { ...fullData, marketPriceData: scoredMarket }
-      );
-
-      // 상세 페이지의 fixed 위치 등 기존 인라인 스타일을 그대로 유지한다.
-      updatedBadge.style.cssText = badge.style.cssText;
-      badge.dispatchEvent(new Event('mouseleave'));
-      badge.replaceWith(updatedBadge);
-      entry.badge = updatedBadge;
-    } catch (error) {
-      console.warn('[EncarScore] 가격 구간 평균점수 계산 실패:', error);
-    }
   }
 
   // ═══════════════════════════════════════════════════════════════

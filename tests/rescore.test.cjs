@@ -81,28 +81,17 @@ test('다시 채점한 점수로 최소 점수 필터를 다시 적용한다', a
   assert.equal(container.style.display, '');
 });
 
-test('늦게 끝난 시세 점수 계산이 새로 그린 배지를 덮어쓰지 않는다', async () => {
-  // 처음 가중치의 시세 계산이 다시 채점한 뒤의 계산보다 늦게 끝나는 상황
-  let releaseStale, releaseLatest;
-  const stale = new Promise(resolve => { releaseStale = resolve; });
-  const latest = new Promise(resolve => { releaseLatest = resolve; });
-  const { context, container } = setup({ marketResponses: [stale, latest] });
-  const fullData = { ...car, marketPriceData: { items: [{ id: '2', price: 1900 }] } };
+test('다시 채점할 때 시세를 다시 조회하거나 동급 매물을 채점하지 않는다 (툴팁을 열 때만)', async () => {
+  let marketScoringCalls = 0;
+  const marketResponses = new Proxy([], { get: (target, prop) => (prop === 'shift' ? () => { marketScoringCalls++; } : target[prop]) });
+  const { context, container } = setup({ marketResponses });
+  const fullData = { ...car, marketPriceData: { items: [{ id: '2', price: 1900 }] }, tooltipExtrasLoaded: true };
   const entry = { container, cardData: {}, fullData, isDetail: false, badge: null };
   context.renderScoreBadge(entry, context.W);
   context.scoredEntries.add(entry);
-  const latestWeights = { accident: 25, mileage: 15, price: 25, inspection: 20, rental: 0, ownerChanges: 15 };
-  assert.notEqual(context.calc(fullData, latestWeights), context.calc(fullData, context.W));
-  await context.rescoreAll(latestWeights);
-
-  releaseLatest({ items: [], scoresLoaded: true });
-  await new Promise(resolve => setImmediate(resolve));
-  releaseStale({ items: [], scoresLoaded: true });
-  await new Promise(resolve => setImmediate(resolve));
-
-  // 처음 가중치의 늦은 결과는 버려지고, 마지막 가중치로 그린 배지만 남는다
-  assert.equal(entry.badge.isConnected, true);
-  assert.equal(entry.badge.score, context.calc(fullData, latestWeights));
+  await context.rescoreAll({ accident: 25, mileage: 15, price: 25, inspection: 20, rental: 0, ownerChanges: 15 });
+  assert.equal(marketScoringCalls, 0);
+  assert.equal(entry.badge.score, context.calc(fullData, { accident: 25, mileage: 15, price: 25, inspection: 20, rental: 0, ownerChanges: 15 }));
 });
 
 test('상세 페이지 배지는 고정 위치 스타일을 유지한다', () => {

@@ -24,6 +24,8 @@ const DetailParser = (() => {
   const scoreFetchQueue = [];
   const yearlyMarketDataCache = new Map();
   const soldOutPriceDataCache = new Map();
+  const tooltipExtrasCache = new Map();
+  const vehicleCache = new Map();
   let activeScoreFetches = 0;
 
   /**
@@ -87,17 +89,17 @@ const DetailParser = (() => {
   }
 
   /**
-   * 차량 상세 데이터 전체 취합 (공개 API)
-   * = fetchCarData + fetchDealerAvgScore
+   * 배지(점수)용 차량 데이터 (공개 API)
+   * 점수에 필요한 데이터만 받는다. 검색 API는 가격 배점용 연식별 시세 1건(모델·트림별 캐시)뿐이다.
+   * 툴팁에만 쓰는 동급매물 시세·딜러 평균은 fetchTooltipExtras로 툴팁을 열 때 받는다.
    */
   async function fetchDetailData(carId) {
     try {
-      const base = await fetchCarData(carId, { withMarketPrices: true });
+      const base = await fetchCarData(carId, { withMarketPrices: false, withYearlyMarketData: true, withDealerProfile: true });
       if (!base) return getDefaultDetailData();
 
-      const dealerAvgScore = await fetchDealerAvgScore(base._userId, carId);
       const { _userId, ...result } = base;
-      return { ...result, dealerAvgScore };
+      return { ...result, dealerUserId: _userId, marketPriceData: null, dealerAvgScore: null };
     } catch (err) {
       console.warn('[EncarScore] fetchDetailData 실패:', carId, err);
       return getDefaultDetailData();
@@ -105,18 +107,50 @@ const DetailParser = (() => {
   }
 
   /**
+   * 툴팁용 추가 데이터: 동급매물 시세(가격 분포 차트)와 딜러 평균 점수.
+   * 매물마다 검색 API를 여러 건(딜러 매물 채점 포함) 쓰므로 툴팁을 처음 열 때만 받고 매물별로 캐시한다.
+   */
+  function fetchTooltipExtras(carId, dealerUserId) {
+    const key = String(carId);
+    if (tooltipExtrasCache.has(key)) return tooltipExtrasCache.get(key);
+    const promise = (async () => {
+      const vehicleData = await fetchVehicle(carId);
+      const [marketPriceData, dealerAvgScore] = await Promise.all([
+        vehicleData ? fetchMarketPrices(vehicleData) : null,
+        fetchDealerAvgScore(dealerUserId, carId)
+      ]);
+      return { marketPriceData, dealerAvgScore };
+    })();
+    tooltipExtrasCache.set(key, promise);
+    promise.catch(() => tooltipExtrasCache.delete(key));
+    return promise;
+  }
+
+  /** 차량 기본 정보. 배지 조회 뒤 툴팁 조회에서 다시 받지 않도록 매물별로 캐시한다. */
+  function fetchVehicle(carId) {
+    const key = String(carId);
+    if (vehicleCache.has(key)) return vehicleCache.get(key);
+    const promise = fetchJson(`${BASE}/vehicle/${carId}`);
+    vehicleCache.set(key, promise);
+    promise.then(data => { if (!data) vehicleCache.delete(key); }, () => vehicleCache.delete(key));
+    return promise;
+  }
+
+  /**
    * 차량 핵심 데이터 취합 (내부 함수)
    * 딜러 평균점수 조회는 포함하지 않아 재귀 방지.
    * withMarketPrices=false 시 가격 히스토그램 조회를 생략한다.
    * withYearlyMarketData=true이면 가격 배점용 연식 평균표만 별도로 조회한다.
+   * withDealerProfile=true이면 딜러 프로필(가입일·누적 판매)을 조회한다. 검색 API가 아니라 부담이 적다.
    */
   async function fetchCarData(carId, {
     withMarketPrices = true,
-    withYearlyMarketData = withMarketPrices
+    withYearlyMarketData = withMarketPrices,
+    withDealerProfile = withMarketPrices
   } = {}) {
     try {
       // 1. 기본 정보 (vehicleNo + 보험이력 노출 여부 확인)
-      const vehicleData = await fetchJson(`${BASE}/vehicle/${carId}`);
+      const vehicleData = await fetchVehicle(carId);
       const vehicleNo = vehicleData?.vehicleNo ?? '';
 
       // dummy(재등록) 매물은 URL의 carId와 실제 데이터 vehicleId가 다름
@@ -146,7 +180,7 @@ const DetailParser = (() => {
         fetchJson(`https://api.encar.com/v1/readside/vehicles/car/${actualId}/options/choice`),
         withMarketPrices ? fetchMarketPrices(vehicleData) : null,
         withYearlyMarketData ? fetchYearlyMarketData(vehicleData) : null,
-        (withMarketPrices && _userId) ? fetchJson(`${BASE}/user/${_userId}`) : null
+        (withDealerProfile && _userId) ? fetchJson(`${BASE}/user/${_userId}`) : null
       ]);
 
       // originPrice = 기본가 + 실제 선택된 옵션가감의 합계
@@ -855,21 +889,73 @@ const DetailParser = (() => {
   // 목록 페이지는 카드마다 시세 검색을 동시에 보내 429가 잦으므로 잠시 쉬었다가 재시도한다
   const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
+  // 검색 API(시세·연식별 시세·딜러 매물)는 카드마다 한꺼번에 몰려 429를 받는다.
+  // 실제 측정에서 검색 API는 약 1.4초에 3~4건을 넘으면 429를 돌려줬다(상세 조회 API는 제한 없음).
+  // 그래서 동시에 SEARCH_CONCURRENCY개까지만, 출발 간격은 SEARCH_MIN_INTERVAL_MS 이상으로 보내고,
+  // 하나라도 429를 받으면 모든 검색을 함께 멈춰 거절된 요청들이 각자 재시도하며 다시 몰리지 않게 한다.
+  const SEARCH_CONCURRENCY = 2;
+  const SEARCH_MIN_INTERVAL_MS = 450;
+  let activeSearches = 0;
+  const searchWaiters = [];
+  let searchPausedUntil = 0;
+  let nextSearchAt = 0;
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function acquireSearchSlot() {
+    if (activeSearches < SEARCH_CONCURRENCY) {
+      activeSearches++;
+      return;
+    }
+    // 끝난 요청이 자리를 그대로 넘겨준다 (releaseSearchSlot)
+    await new Promise(resolve => searchWaiters.push(resolve));
+  }
+
+  function releaseSearchSlot() {
+    const next = searchWaiters.shift();
+    if (next) next();
+    else activeSearches--;
+  }
+
+  /** 429 대기가 끝나고 직전 검색 출발 후 최소 간격이 지날 때까지 기다린 뒤 출발 시각을 예약한다. */
+  async function waitForSearchTurn() {
+    for (;;) {
+      const now = Date.now();
+      const readyAt = Math.max(searchPausedUntil, nextSearchAt);
+      if (now >= readyAt) {
+        nextSearchAt = now + SEARCH_MIN_INTERVAL_MS;
+        return;
+      }
+      await sleep(readyAt - now);
+    }
+  }
+
   async function fetchJson(url) {
-    let res;
-    for (let attempt = 0; ; attempt++) {
-      res = await fetch(url, {
-        credentials: 'omit',
-        headers: { 'Accept': 'application/json' }
-      });
-      if (res.status !== 429 || attempt >= RETRY_DELAYS_MS.length) break;
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt] + Math.random() * 500));
+    const isSearch = url.includes('/search/');
+    if (isSearch) await acquireSearchSlot();
+    try {
+      let res;
+      for (let attempt = 0; ; attempt++) {
+        if (isSearch) await waitForSearchTurn();
+        res = await fetch(url, {
+          credentials: 'omit',
+          headers: { 'Accept': 'application/json' }
+        });
+        if (res.status !== 429 || attempt >= RETRY_DELAYS_MS.length) break;
+        // Retry-After가 있으면 따르되 10초를 넘기지 않는다. 재시도를 기다리는 동안에도 자리를 유지한다.
+        const retryAfterMs = Number(res.headers?.get?.('Retry-After')) * 1000;
+        const delay = Math.min(10000, retryAfterMs > 0 ? retryAfterMs : RETRY_DELAYS_MS[attempt] + Math.random() * 500);
+        if (isSearch) searchPausedUntil = Math.max(searchPausedUntil, Date.now() + delay);
+        await sleep(delay);
+      }
+      if (!res.ok) {
+        console.warn('[EncarScore] API 오류:', url, res.status);
+        return null;
+      }
+      return await res.json();
+    } finally {
+      if (isSearch) releaseSearchSlot();
     }
-    if (!res.ok) {
-      console.warn('[EncarScore] API 오류:', url, res.status);
-      return null;
-    }
-    return res.json();
   }
 
   /** 기본값 (API 실패 시) */
@@ -898,12 +984,14 @@ const DetailParser = (() => {
       dealerName: '',
       dealerFirmName: '',
       dealerJoinedDatetime: null,
-      dealerTotalSales: 0
+      dealerTotalSales: 0,
+      dealerUserId: ''
     };
   }
 
   return {
     fetchDetailData,
+    fetchTooltipExtras,
     fetchSoldOutPriceData,
     fetchSoldOutYearlyData,
     scoreMarketItems,
