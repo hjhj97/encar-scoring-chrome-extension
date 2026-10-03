@@ -29,6 +29,7 @@
         "scoring/calculator.js",
         "detail-parser.js",
         "depreciation.js",
+        "owner-history.js",
         "content.js"
       ],
       "css": ["styles.css"],

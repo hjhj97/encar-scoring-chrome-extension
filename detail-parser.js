@@ -195,6 +195,9 @@ const DetailParser = (() => {
         mileage: vehicleData?.spec?.mileage ?? 0,   // API 기반 주행거리
         price: vehicleData?.advertisement?.price ?? 0, // API 기반 가격
         firstAdvertisedDateTime,
+        // 소유주 보정 안내는 재등록 광고일이 아니라 엔카 등록일을 기준으로 한다.
+        registDateTime: vehicleData?.manage?.registDateTime ?? null,
+        sellerUserType: vehicleData?.contact?.userType ?? null,
         ...parseRecord(recordData, !recordViewable),
         ...parseInspection(inspectionData),
         ...parseDiagnosis(diagnosisData, vehicleData),
@@ -312,6 +315,7 @@ const DetailParser = (() => {
         isInsurancePrivate,
         ownerChangeCount: 0,
         ownerChanges: [],
+        ownerHistoryComplete: false,
         firstRegistrationDate: null,
         insuranceHistory: [],
         hasRentalHistory: false, hasUsageChange: false,
@@ -338,6 +342,10 @@ const DetailParser = (() => {
     const floodDate           = data.floodDate || null;
     const ownerChanges = !isInsurancePrivate && Array.isArray(data.ownerChanges)
       ? data.ownerChanges.filter(date => typeof date === 'string') : [];
+    // 기존 채점 기본값(0회)을 실제로 확인된 0회로 오인하지 않도록 원본 완전성을 별도 보관한다.
+    const ownerHistoryComplete = !isInsurancePrivate && Number.isInteger(data.ownerChangeCnt) &&
+      data.ownerChangeCnt >= 0 && Array.isArray(data.ownerChanges) &&
+      data.ownerChanges.length === data.ownerChangeCnt && ownerChanges.length === data.ownerChangeCnt;
     const firstRegistrationDate = !isInsurancePrivate ? data.firstDate ?? null : null;
     const insuranceHistory = !isInsurancePrivate && Array.isArray(data.accidents)
       ? data.accidents.filter(item => item && typeof item.date === 'string').map(item => ({
@@ -371,7 +379,7 @@ const DetailParser = (() => {
 
     console.log('[EncarScore] 보험이력:', isInsurancePrivate ? '비공개 (큰 감점)' : `${insuranceCount}건`, '/ 내차피해:', myDamageCount, '회 / 렌트이력:', hasRentalHistory, '/ 소유주변경:', ownerChangeCount, '회 / 정보제공불가기간:', unavailablePeriods);
 
-    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, accidentAmounts, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, ownerChanges, firstRegistrationDate, insuranceHistory, hasRentalHistory, hasUsageChange,
+    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, accidentAmounts, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, ownerChanges, ownerHistoryComplete, firstRegistrationDate, insuranceHistory, hasRentalHistory, hasUsageChange,
       totalLossCount, floodTotalLossCount, floodPartLossCount, totalLossDate, floodDate };
   }
 
@@ -868,6 +876,9 @@ const DetailParser = (() => {
       hasRentalHistory: false, hasUsageChange: false,
       month: 0,
       firstAdvertisedDateTime: null,
+      registDateTime: null,
+      sellerUserType: null,
+      ownerHistoryComplete: false,
       marketPriceData: null,
       yearlyMarketData: null,
       dealerAvgScore: null,

@@ -557,6 +557,8 @@
         }
       : dealerAvgSource;
     const registedAgo = formatRelativeTime(firstAdvertisedDateTime);
+    // 안내만 보정한다. ownerChangeCount와 원본 타임라인, scoreResult는 변경하지 않는다.
+    const ownerEstimate = OwnerHistory.describe(OwnerHistory.estimate(fullData));
     const soldOutLookupId = actualCarId || carId;
     const canAnalyzeSoldOut = Boolean(soldOutLookupId) && isDetailPage();
 
@@ -1001,6 +1003,7 @@
         <span>${Math.round(scoreResult.breakdown.ownerChanges)}/${w.ownerChanges}</span>
       </div>
       <div class="encar-tooltip-detail">소유자 변경: ${ownerChangeCount}회</div>
+      <div class="encar-tooltip-detail encar-owner-estimate" title="${escapeHtml(ownerEstimate.title)}">${escapeHtml(ownerEstimate.text)}</div>
       ${createOwnerTimeline(fullData)}
       </section>
       ${dealerAvgScore ? `
@@ -1096,6 +1099,7 @@
       ...(hasWeldCut ? [`용접·절단: ${weldCutPartsText} (종합점수 -${penaltyPoints('weldCut')}점)`] : []),
       `렌트이력: ${rentalStr}`,
       `소유주변경: ${ownerStr}`,
+      `${ownerEstimate.text} (원본 이력·점수 유지)`,
     );
     if (dealerAvgScore) {
       clipboardLines.push(`${dealerFullName} 평균점수: ${dealerAvgScore.avg}점 (최근 ${dealerAvgScore.count}개 매물)`);
