@@ -10,6 +10,11 @@
   // 1. 유틸리티
   // ═══════════════════════════════════════════════════════════════
 
+  /** API 문자열을 툴팁 HTML에 넣을 때 사용 */
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+  }
+
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -537,6 +542,9 @@
             isInspectionPrivate = false,
             hasInspection = false, hasReplacement = false, hasWelding = false, hasCorrosion = false,
             hasDiagnosis = false, diagnosisTier = null,
+            hasWeldCut = false, weldCutParts = [],
+            totalLossCount = 0, floodTotalLossCount = 0, floodPartLossCount = 0,
+            totalLossDate = null, floodDate = null, inspectionFlood = false,
             hasRentalHistory = false,
             firstAdvertisedDateTime = null,
             dealerJoinedDatetime = null, dealerTotalSales = 0,
@@ -558,6 +566,56 @@
       accidentLines.push(`⚠️ 정보제공 불가기간: ${unavailablePeriods.join(', ')}`);
     }
     const accidentText = accidentLines.join('\n');
+
+    // 성능점검: 사고·수리 기록 감점이 엔카진단보다 우선하므로 진단 매물도 성능점검표 요약을 함께 보여준다.
+    const sheetCounts = fullData.rankCounts;
+    const sheetParts = sheetCounts ? [
+      ['골격 교환', sheetCounts.A.X + sheetCounts.B.X],
+      ['골격 판금', sheetCounts.A.W + sheetCounts.B.W],
+      ['외판 교환', sheetCounts.ONE.X + sheetCounts.TWO.X],
+      ['외판 판금', sheetCounts.ONE.W + sheetCounts.TWO.W],
+      ['부식', sheetCounts.ONE.C + sheetCounts.TWO.C + sheetCounts.A.C + sheetCounts.B.C]
+    ].filter(([, count]) => count > 0).map(([label, count]) => `${label} ${count}`) : [
+      ...(hasReplacement ? ['교환'] : []), ...(hasWelding ? ['판금'] : []), ...(hasCorrosion ? ['부식'] : [])
+    ];
+    const inspectionSheetText = !hasInspection ? '성능점검표 없음'
+      : sheetParts.length > 0 ? `성능점검표: ${sheetParts.join(' · ')}` : '성능점검표: 이상 없음';
+    const diagnosisFindings = [
+      ...(fullData.diagFrameReplacement ? ['프레임 교환'] : []),
+      ...(fullData.diagPanelReplacement ? ['외판 교환'] : [])
+    ];
+    // 엔카진단++ 가산점은 수리 감점이 없을 때만 붙어 성능점검 배점을 넘는다.
+    const plusPlusApplied = diagnosisTier === 'PLUSPLUS' && scoreResult.breakdown.inspection > w.inspection;
+    const diagnosisText = [
+      diagnosisTier === 'PLUSPLUS' ? `엔카진단++ ${plusPlusApplied ? '(+4점)' : '(수리 이력이 있어 가산점 없음)'}`
+        : diagnosisTier === 'PLUS' ? '엔카진단+' : '엔카진단',
+      ...(diagnosisFindings.length > 0 ? [`진단 판정: ${diagnosisFindings.join(' · ')}`] : [])
+    ].join(' · ');
+
+    // 결격 사유(용접·절단, 전손·침수)는 종합점수 페널티와 함께 사고/보험이력 아래에 빨간 경고로 표시
+    const penaltyPoints = key => (scoreResult.penalties || []).find(item => item.key === key)?.points ?? 0;
+    const criticalWarningHtml = (title, detail) => `<div class="encar-critical-warning">
+          <strong>⛔ ${title}</strong>
+          <span>${escapeHtml(detail)}</span>
+        </div>`;
+
+    const weldCutPartsText = weldCutParts.join(', ');
+    const weldCutHtml = hasWeldCut
+      ? criticalWarningHtml(`용접·절단 수리 · 종합점수 -${penaltyPoints('weldCut')}점`,
+          `${weldCutPartsText} — 차체에 용접된 패널을 잘라내고 다시 붙인 수리 (성능점검표)`)
+      : '';
+
+    const hasTotalLossFlood = EncarScoring.hasTotalLossOrFlood(fullData);
+    const totalLossFloodText = [
+      ...(totalLossCount > 0 ? [`전손 ${totalLossCount}회${totalLossDate ? ` (${totalLossDate})` : ''}`] : []),
+      ...(floodTotalLossCount > 0 ? [`침수 전손 ${floodTotalLossCount}회`] : []),
+      ...(floodPartLossCount > 0 ? [`침수 분손 ${floodPartLossCount}회`] : []),
+      ...((floodTotalLossCount > 0 || floodPartLossCount > 0) && floodDate ? [`침수일 ${floodDate}`] : []),
+      ...(inspectionFlood ? ['성능점검표 침수 표시'] : [])
+    ].join(' · ');
+    const totalLossFloodHtml = hasTotalLossFlood
+      ? criticalWarningHtml(`전손·침수 이력 · 종합점수 -${penaltyPoints('totalLossFlood')}점`, totalLossFloodText)
+      : '';
 
     // 가격점수 기준: 현재 차량과 같은 출고연도의 평균가격
     const yearlyPricePoint = EncarScoring.getYearlyPricePoint(fullData);
@@ -888,13 +946,15 @@
         ${registedAgo ? `<div class="encar-tooltip-registed">${registedAgo} 등록</div>` : ''}
       </div>
       <div class="encar-tooltip-total">종합점수: <strong>${scoreResult.total}점</strong> (${scoreResult.grade}등급)</div>
-      ${scoreResult.penalty ? `<div style="color:#ff5252; font-size:12px; margin-top:4px;">⚠️ 미공개 항목 페널티 (-40점)</div>` : ''}
+      ${(scoreResult.penalties || []).map(item => `<div style="color:#ff5252; font-size:12px; margin-top:4px;">⚠️ ${item.label} 페널티 (-${item.points}점)</div>`).join('')}
       <div class="encar-tooltip-divider"></div>
       <div class="encar-tooltip-row">
         <span>🚗 사고/보험이력 (${insuranceCount}건)</span>
         <span>${Math.round(scoreResult.breakdown.accident)}/${w.accident}</span>
       </div>
       ${accidentText ? `<div class="encar-tooltip-detail">${accidentText}</div>` : ''}
+      ${totalLossFloodHtml}
+      ${weldCutHtml}
       <div class="encar-tooltip-row">
         <span>📏 주행거리</span>
         <span>${Math.round(scoreResult.breakdown.mileage)}/${w.mileage}</span>
@@ -920,12 +980,10 @@
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>
       </div>
-      ${isInspectionPrivate ? `<div class="encar-tooltip-detail">조회불가 · 비공개</div>`
-        : hasDiagnosis ? `<div class="encar-tooltip-detail">${
-            diagnosisTier === 'PLUSPLUS' ? '엔카진단++ (+4점)'
-          : diagnosisTier === 'PLUS'    ? '엔카진단+'
-          : '엔카진단'
-        }</div>` : `<div class="encar-tooltip-detail" style="color:#ffcc00">엔카진단 미적용 (-5점)</div>`}
+      ${isInspectionPrivate ? `<div class="encar-tooltip-detail">조회불가 · 비공개</div>` : `
+        <div class="encar-tooltip-detail">${inspectionSheetText}</div>
+        ${hasDiagnosis ? `<div class="encar-tooltip-detail">${diagnosisText}</div>`
+          : `<div class="encar-tooltip-detail" style="color:#ffcc00">엔카진단 미적용 (-5점)</div>`}`}
       <div class="encar-tooltip-row">
         <span>📋 렌트이력</span>
         <span>${Math.round(scoreResult.breakdown.rental)}/${w.rental}</span>
@@ -1027,6 +1085,8 @@
     clipboardLines.push(
       `보험이력: ${insuranceStr}`,
       `성능점검: ${inspStr}`,
+      ...(hasTotalLossFlood ? [`전손·침수: ${totalLossFloodText} (종합점수 -${penaltyPoints('totalLossFlood')}점)`] : []),
+      ...(hasWeldCut ? [`용접·절단: ${weldCutPartsText} (종합점수 -${penaltyPoints('weldCut')}점)`] : []),
       `렌트이력: ${rentalStr}`,
       `소유주변경: ${ownerStr}`,
     );

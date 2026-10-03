@@ -314,7 +314,8 @@ const DetailParser = (() => {
         ownerChanges: [],
         firstRegistrationDate: null,
         insuranceHistory: [],
-        hasRentalHistory: false, hasUsageChange: false
+        hasRentalHistory: false, hasUsageChange: false,
+        totalLossCount: 0, floodTotalLossCount: 0, floodPartLossCount: 0, totalLossDate: null, floodDate: null
       };
     }
 
@@ -328,6 +329,13 @@ const DetailParser = (() => {
     const otherDamageAmount= data.otherAccidentCost  ?? 0;
     const isAccidentFree   = (myDamageCount + otherDamageCount) === 0;
     const ownerChangeCount = data.ownerChangeCnt     ?? 0;
+
+    // 전손·침수 이력. 기록이 없으면 0, floodPartLossCnt는 null로 오기도 한다.
+    const totalLossCount      = Number(data.totalLossCnt) || 0;
+    const floodTotalLossCount = Number(data.floodTotalLossCnt) || 0;
+    const floodPartLossCount  = Number(data.floodPartLossCnt) || 0;
+    const totalLossDate       = data.totalLossDate || null;
+    const floodDate           = data.floodDate || null;
     const ownerChanges = !isInsurancePrivate && Array.isArray(data.ownerChanges)
       ? data.ownerChanges.filter(date => typeof date === 'string') : [];
     const firstRegistrationDate = !isInsurancePrivate ? data.firstDate ?? null : null;
@@ -363,16 +371,20 @@ const DetailParser = (() => {
 
     console.log('[EncarScore] 보험이력:', isInsurancePrivate ? '비공개 (큰 감점)' : `${insuranceCount}건`, '/ 내차피해:', myDamageCount, '회 / 렌트이력:', hasRentalHistory, '/ 소유주변경:', ownerChangeCount, '회 / 정보제공불가기간:', unavailablePeriods);
 
-    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, accidentAmounts, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, ownerChanges, firstRegistrationDate, insuranceHistory, hasRentalHistory, hasUsageChange };
+    return { insuranceCount, myDamageCount, myDamageAmount, otherDamageCount, otherDamageAmount, isAccidentFree, isInsurancePrivate, accidentAmounts, hasUnavailablePeriod, unavailablePeriods, ownerChangeCount, ownerChanges, firstRegistrationDate, insuranceHistory, hasRentalHistory, hasUsageChange,
+      totalLossCount, floodTotalLossCount, floodPartLossCount, totalLossDate, floodDate };
   }
 
   /* ──────────────────────────────────────────────
    * Inspection API 파싱 (성능점검)
    * outers[].attributes: RANK_ONE(외판1), RANK_TWO(외판2), RANK_A(골격A), RANK_B(골격B)
-   * outers[].statusTypes[].code: X=교환, /|W=판금, C|U=부식
+   * outers[].statusTypes[].code: X=교환, /|W=판금, WC=용접·절단, C|U=부식
+   * 용접·절단(WC)은 차체에 용접된 패널을 잘라내고 다시 붙인 수리라 판금으로 세고, 종합점수에서도 별도로 크게 감점한다.
    * ────────────────────────────────────────────── */
+  const WELDING_CODES = ['/', 'W', 'WC'];
+
   function parseInspection(data) {
-    if (!data) return { hasInspection: false, hasReplacement: false, hasWelding: false, hasCorrosion: false, rankCounts: null };
+    if (!data) return { hasInspection: false, hasReplacement: false, hasWelding: false, hasCorrosion: false, rankCounts: null, hasWeldCut: false, weldCutParts: [], inspectionFlood: false };
 
     const hasInspection = true;
     const outers = data.outers ?? [];
@@ -387,7 +399,7 @@ const DetailParser = (() => {
 
     for (const item of outers) {
       const hasX = item.statusTypes?.some(s => s.code === 'X') || item.status === 'X';
-      const hasW = item.statusTypes?.some(s => ['/', 'W'].includes(s.code)) || ['/', 'W'].includes(item.status);
+      const hasW = item.statusTypes?.some(s => WELDING_CODES.includes(s.code)) || WELDING_CODES.includes(item.status);
       const hasC = item.statusTypes?.some(s => ['C', 'U'].includes(s.code)) || ['C', 'U'].includes(item.status);
 
       const attrs = item.attributes ?? [];
@@ -402,13 +414,18 @@ const DetailParser = (() => {
     }
 
     const hasReplacement = outers.some(p => p.statusTypes?.some(st => st.code === 'X') || p.status === 'X');
-    const hasWelding     = outers.some(p => p.statusTypes?.some(st => ['/', 'W'].includes(st.code)) || ['/', 'W'].includes(p.status));
+    const hasWelding     = outers.some(p => p.statusTypes?.some(st => WELDING_CODES.includes(st.code)) || WELDING_CODES.includes(p.status));
     const hasCorrosion   = outers.some(p => p.statusTypes?.some(st => ['C', 'U'].includes(st.code)) || ['C', 'U'].includes(p.status));
+    const weldCutParts   = outers
+      .filter(p => p.statusTypes?.some(st => st.code === 'WC') || p.status === 'WC')
+      .map(p => p.type?.title || p.type?.code || '부위 미상');
 
     console.log('[EncarScore] 성능점검 → 골격A교환:', rankCounts.A.X, '골격B교환:', rankCounts.B.X,
       '외판2교환:', rankCounts.TWO.X, '외판1교환:', rankCounts.ONE.X,
-      '판금:', hasWelding, '부식:', hasCorrosion);
-    return { hasInspection, hasReplacement, hasWelding, hasCorrosion, rankCounts };
+      '판금:', hasWelding, '부식:', hasCorrosion, '용접·절단:', weldCutParts);
+    // 성능점검표의 침수 여부 표시 (보험이력의 침수 기록과 함께 전손·침수 페널티 판단에 사용)
+    const inspectionFlood = data.master?.detail?.waterlog === true;
+    return { hasInspection, hasReplacement, hasWelding, hasCorrosion, rankCounts, hasWeldCut: weldCutParts.length > 0, weldCutParts, inspectionFlood };
   }
 
   /* ──────────────────────────────────────────────
@@ -846,6 +863,8 @@ const DetailParser = (() => {
       isAccidentFree: false,
       hasInspection: false,
       hasReplacement: false, hasWelding: false, hasCorrosion: false,
+      hasWeldCut: false, weldCutParts: [], inspectionFlood: false,
+      totalLossCount: 0, floodTotalLossCount: 0, floodPartLossCount: 0, totalLossDate: null, floodDate: null,
       hasRentalHistory: false, hasUsageChange: false,
       month: 0,
       firstAdvertisedDateTime: null,
