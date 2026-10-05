@@ -5,6 +5,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../depreciation.js'), 'utf8');
+const contentSource = fs.readFileSync(path.join(__dirname, '../content.js'), 'utf8');
+const barSource = contentSource.slice(
+  contentSource.indexOf('  function createDepreciationBar('),
+  contentSource.indexOf('  function createYearlyMarketChart(')
+);
 
 function load(extra = {}) {
   const context = vm.createContext({ console: { log() {}, warn() {} }, Date, Math, setTimeout, ...extra });
@@ -269,7 +274,7 @@ async function renderDepreciation({ fetchResult, fetchError, modelGroupName = '�
     clipboardExtras: {}, refreshClipboardText() {}, requestAnimationFrame() {}, positionTooltip() {},
     fetchResult, fetchError
   });
-  vm.runInContext(`${source}
+  vm.runInContext(`${source}\n${barSource}
     EncarDepreciation.fetchCurve = async () => { if (fetchError) throw fetchError; return fetchResult; };
     ${loader}
     this.done = loadDepreciation();`, context);
@@ -280,11 +285,12 @@ async function renderDepreciation({ fetchResult, fetchError, modelGroupName = '�
     forecast: text('[data-encar-depreciation-forecast]'),
     title: elements['[data-encar-depreciation-forecast]']?.title || '',
     levelClass: elements['[data-encar-depreciation-level]']?.className || '',
+    bar: elements['[data-encar-depreciation-bar]']?.innerHTML || '',
     clipboard: context.clipboardExtras.depreciation || ''
   };
 }
 
-test('툴팁: 제목 줄에 단계, 아래 줄에 1년 후 예상가(ⓘ에 세부 근거), 실패 시 사유', async () => {
+test('툴팁: 감가 막대 아래에 1년 예상 감가액·예상가 표시, 근거와 복사 내용 유지', async () => {
   const D = load();
   const curve = D.fitCurve(synthetic({ seed: 10 }));
   const expected = D.estimate(curve, { age: 5, price: 2000, originPrice: 3800 });
@@ -292,9 +298,12 @@ test('툴팁: 제목 줄에 단계, 아래 줄에 1년 후 예상가(ⓘ에 세�
   const ok = await renderDepreciation({ fetchResult: { curve, reason: null } });
   const loss = Math.round(expected.yearLoss);
   assert.equal(ok.level, expected.level.label);
-  assert.equal(ok.forecast, `1년 후 예상가 ${(2000 - loss).toLocaleString()}만원 (-${loss.toLocaleString()}만원, 신차가 대비 ${(expected.originRate * 100).toFixed(1)}%) ⓘ`);
+  assert.equal(ok.forecast, `1년 예상 감가 ${loss.toLocaleString()}만원 · 1년 후 예상가 ${(2000 - loss).toLocaleString()}만원 ⓘ`);
+  assert.doesNotMatch(ok.forecast, /신차가 100% 기준/);
+  assert.ok(ok.title.startsWith(`1년 후 예상가 ${(2000 - loss).toLocaleString()}만원 (-${loss.toLocaleString()}만원, 신차가 대비 ${(expected.originRate * 100).toFixed(1)}%)`));
+  assert.match(ok.bar, /data-depreciation-part="forecast"/);
   assert.match(ok.levelClass, new RegExp(`encar-depreciation-level--${expected.level.key}`));
-  assert.match(ok.title, /^현재가 대비 [\d.]+% \(연식 [\d.]+% \+ 주행 [\d.]+%\)\n그랜저 매물 [\d,]+대 회귀/);
+  assert.match(ok.title, /현재가 대비 [\d.]+% \(연식 [\d.]+% \+ 주행 [\d.]+%\)\n그랜저 매물 [\d,]+대 회귀/);
   assert.match(ok.clipboard, new RegExp(`현재 감가: ${expected.level.label} · 1년 후 예상가 [\\d,]+만원 \\(-[\\d,]+만원, 신차가 대비 [\\d.]+%\\) · 현재가 대비`));
 
   const small = await renderDepreciation({ fetchResult: { curve: { ...curve, bootstrap: [curve, curve] }, reason: null } });
@@ -303,16 +312,23 @@ test('툴팁: 제목 줄에 단계, 아래 줄에 1년 후 예상가(ⓘ에 세�
   // 신차가가 없으면 단계 없이 예상가·하락액만 표시
   const noOrigin = await renderDepreciation({ fetchResult: { curve, reason: null }, originPrice: 0 });
   assert.equal(noOrigin.level, '신차가 정보 없음');
-  assert.match(noOrigin.forecast, /^1년 후 예상가 [\d,]+만원 \(-[\d,]+만원\) ⓘ$/);
+  assert.equal(noOrigin.forecast, `1년 예상 감가 ${loss.toLocaleString()}만원 · 1년 후 예상가 ${(2000 - loss).toLocaleString()}만원 ⓘ`);
   assert.match(noOrigin.levelClass, /--none/);
+  assert.match(noOrigin.bar, /신차가 정보 없음 · 비율 표시 불가/);
+  assert.doesNotMatch(noOrigin.bar, /data-depreciation-part/);
 
   const insufficient = await renderDepreciation({ fetchResult: { curve: null, reason: '표본 부족 (98대, 최소 150대)' } });
   assert.equal(insufficient.level, '추정 불가');
   assert.equal(insufficient.forecast, '표본 부족 (98대, 최소 150대)');
   assert.match(insufficient.levelClass, /--none/);
+  assert.match(insufficient.bar, /data-depreciation-part="retained"/);
+  assert.match(insufficient.bar, /data-depreciation-part="past"/);
+  assert.doesNotMatch(insufficient.bar, /data-depreciation-part="forecast"/);
 
   const failed = await renderDepreciation({ fetchError: new Error('HTTP 429') });
   assert.equal(failed.level, '조회 실패');
+  assert.match(failed.bar, /data-depreciation-part="past"/);
+  assert.doesNotMatch(failed.bar, /data-depreciation-part="forecast"/);
 
   const noModel = await renderDepreciation({ modelGroupName: '' });
   assert.equal(noModel.level, '추정 불가');
@@ -347,7 +363,7 @@ test('매물 조회: 429·네트워크 오류는 재시도, 4xx는 즉시 실패
   assert.equal(badCalls, 1);
 });
 
-test('툴팁 로딩: 계산 중에는 스피너, 끝나면 스피너 제거', async () => {
+test('툴팁 로딩: 현재 가치 막대와 스피너를 먼저 표시하고 추정 후 1년 감가 구간 추가', async () => {
   const D = load();
   const curve = D.fitCurve(synthetic({ seed: 12 }));
   let release;
@@ -363,15 +379,68 @@ test('툴팁 로딩: 계산 중에는 스피너, 끝나면 스피너 제거', as
     depreciationTotalText: '', clipboardExtras: {}, refreshClipboardText() {}, requestAnimationFrame() {}, positionTooltip() {},
     pending
   });
-  vm.runInContext(`${source}
+  vm.runInContext(`${source}\n${barSource}
     EncarDepreciation.fetchCurve = () => pending;
     ${loader}
     this.done = loadDepreciation();`, context);
   const forecast = elements['[data-encar-depreciation-forecast]'];
   assert.match(forecast.className, /encar-loading/);
   assert.equal(forecast.textContent, '감가곡선 계산 중…');
+  const bar = elements['[data-encar-depreciation-bar]'];
+  assert.match(bar.innerHTML, /data-depreciation-part="retained"/);
+  assert.doesNotMatch(bar.innerHTML, /data-depreciation-part="forecast"/);
   release({ curve, reason: null });
   await context.done;
   assert.doesNotMatch(forecast.className, /encar-loading/);
-  assert.match(forecast.textContent, /^1년 후 예상가/);
+  const loss = Math.round(D.estimate(curve, { age: 5, price: 2000, originPrice: 3800 }).yearLoss);
+  assert.equal(forecast.textContent, `1년 예상 감가 ${loss.toLocaleString()}만원 · 1년 후 예상가 ${(2000 - loss).toLocaleString()}만원 ⓘ`);
+  assert.match(bar.innerHTML, /data-depreciation-part="forecast"/);
+});
+
+function renderBar(originPrice, price, loss) {
+  const context = vm.createContext({ originPrice, price, loss });
+  vm.runInContext(`${barSource}\nthis.html = createDepreciationBar(originPrice, price, loss);`, context);
+  const parts = Object.fromEntries([...context.html.matchAll(/data-depreciation-part="([^"]+)" style="width:([\d.e+-]+)%"/g)]
+    .map(([, key, value]) => [key, Number(value)]));
+  for (const percent of Object.values(parts)) assert.ok(percent >= 0 && percent <= 100);
+  if (Object.keys(parts).length) assert.ok(Math.abs(Object.values(parts).reduce((a, b) => a + b, 0) - 100) < 1e-8);
+  assert.doesNotMatch(context.html, /NaN|Infinity/);
+  return { html: context.html, parts };
+}
+
+test('감가 막대: 감가 전 100% 초록, 현재 70%·1년 예상 10%p는 초록 60/주황 10/회색 30', () => {
+  assert.deepEqual(renderBar(5000, 5000).parts, { retained: 100, past: 0 });
+  assert.deepEqual(renderBar(5000, 3500).parts, { retained: 70, past: 30 });
+  const predicted = renderBar(5000, 3500, 500);
+  assert.deepEqual(predicted.parts, { retained: 60, forecast: 10, past: 30 });
+  assert.match(predicted.html, /1년 후 잔존 60%/);
+  assert.match(predicted.html, /1년 예상 감가 10%/);
+  assert.match(predicted.html, /1년 후 예상가 3,000만원/);
+});
+
+test('감가 막대: 0 감가와 작은 감가도 실제 비율을 유지하고 현재 가치보다 더 차감하지 않음', () => {
+  assert.deepEqual(renderBar(5000, 3500, 0).parts, { retained: 70, forecast: 0, past: 30 });
+  assert.ok(renderBar(5000, 3500, 1).parts.forecast < 0.1);
+  assert.deepEqual(renderBar(5000, 3500, 8000).parts, { retained: 0, forecast: 70, past: 30 });
+  assert.deepEqual(renderBar(5000, 0, 0).parts, { retained: 0, forecast: 0, past: 100 });
+});
+
+test('감가 막대: 현재가가 신차가 초과 시 100% 범위만 표시하고 이를 알림', () => {
+  const premium = renderBar(5000, 6000, 500);
+  assert.deepEqual(premium.parts, { retained: 100, forecast: 0, past: 0 });
+  assert.match(premium.html, /현재가가 신차가 초과/);
+  assert.match(premium.html, /1년 예상 감가 500만원/);
+  assert.deepEqual(renderBar(5000, 6000, 1500).parts, { retained: 90, forecast: 10, past: 0 });
+});
+
+test('감가 막대: 기준 가격이 없으면 비율을 만들지 않고 예측 실패를 0 감가로 표시하지 않음', () => {
+  for (const origin of [0, -1, NaN, Infinity, null]) {
+    assert.deepEqual(renderBar(origin, 3500, 500).parts, {});
+  }
+  for (const price of [-1, NaN, Infinity, null]) {
+    assert.deepEqual(renderBar(5000, price, 500).parts, {});
+  }
+  for (const loss of [null, undefined, NaN, Infinity, -5]) {
+    assert.deepEqual(renderBar(5000, 3500, loss).parts, { retained: 70, past: 30 });
+  }
 });

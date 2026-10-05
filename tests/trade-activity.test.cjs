@@ -131,6 +131,8 @@ async function renderActivity(data, ok = true) {
   return {
     text: Object.values(elements).map(e => e.innerHTML ? e.innerHTML.replace(/<[^>]*>/g, '') : e.textContent).join('\n'),
     html: Object.values(elements).map(e => e.innerHTML || '').join(''),
+    heading: elements['[data-encar-activity-total]']?.textContent || '',
+    headingTitle: elements['[data-encar-activity-total]']?.title || '',
     clipboard: ctx.clipboardText
   };
 }
@@ -141,7 +143,9 @@ test('표시: 최근 30일 실제 건수·전체 연식 합계와 비율, 복사
   const normal = await renderActivity(base);
   assert.match(normal.text, /현재 판매 중 17대 · 38.6%/);
   assert.match(normal.text, /최근 30일 판매완료 27건 · 61.4%/);
-  assert.match(normal.text, /매물 합계 44건/);
+  assert.equal(normal.heading, '44건');
+  assert.match(normal.headingTitle, /현재 판매 중 \+ 최근 30일 판매완료/);
+  assert.match(normal.headingTitle, /모든 연식/);
   assert.match(normal.html, /fill="#42A5F5"/);
   assert.match(normal.html, /fill="#EF5350"/);
   assert.match(normal.clipboard, /매물 합계 44건/);
@@ -152,26 +156,38 @@ test('표시: 최근 30일 실제 건수·전체 연식 합계와 비율, 복사
   const partial = await renderActivity({...base, soldComplete: false});
   assert.match(partial.text, /이상/);
   assert.doesNotMatch(partial.html, /<svg/);
-  assert.match(partial.text, /매물 합계 44건 이상 · 집계 일부/);
-  assert.match((await renderActivity({...base, sold: 0})).text, /매물 합계 17건/);
-  assert.match((await renderActivity({...base, active: 0})).text, /매물 합계 27건/);
-  assert.match((await renderActivity(null, false)).text, /조회 실패/);
+  assert.equal(partial.heading, '44건 이상 · 집계 일부');
+  assert.equal((await renderActivity({...base, sold: 0})).heading, '17건');
+  assert.equal((await renderActivity({...base, active: 0})).heading, '27건');
+  const failed = await renderActivity(null, false);
+  assert.match(failed.text, /조회 실패/);
+  assert.equal(failed.heading, '—');
+  assert.equal(failed.headingTitle, '');
+});
+
+test('거래 합계는 제목 줄 오른쪽에 배치하고 기존 하단 합계 영역은 제거', () => {
+  const content = fs.readFileSync(require('node:path').join(__dirname, '../content.js'), 'utf8');
+  const heading = content.match(/<div class="encar-tooltip-row encar-trade-heading">([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(heading);
+  assert.match(heading, /<span>📊 거래 현황 \(최근 30일 기준\)<\/span>/);
+  assert.match(heading, /<span data-encar-activity-total>—<\/span>/);
+  assert.doesNotMatch(content, /data-encar-activity-scope/);
 });
 
 test('현재 50대 + 최근 30일 판매완료 20건 = 합계 70건, 0건·부분 집계', async () => {
   const base = {sold: 20, active: 50, soldComplete: true, activeComplete: true, scope: '테스트', start: '', end: ''};
-  assert.match((await renderActivity(base)).text, /매물 합계 70건/);
+  assert.equal((await renderActivity(base)).heading, '70건');
   const small = await renderActivity({...base, sold: 3});
   assert.match(small.text, /판매완료 3건/);
-  assert.match(small.text, /매물 합계 53건/);
+  assert.equal(small.heading, '53건');
   const oneSale = await renderActivity({...base, sold: 1, active: 1000});
-  assert.match(oneSale.text, /매물 합계 1,001건/);
+  assert.equal(oneSale.heading, '1,001건');
   const partialInventory = await renderActivity({...base, sold: 90, activeComplete: false});
-  assert.match(partialInventory.text, /매물 합계 140건 이상 · 집계 일부/);
+  assert.equal(partialInventory.heading, '140건 이상 · 집계 일부');
   assert.doesNotMatch(partialInventory.html, /<svg/);
   const empty = await renderActivity({...base, sold: 0, active: 0});
   assert.match(empty.text, /비교할 매물 없음/);
-  assert.match(empty.text, /매물 합계 0건/);
+  assert.equal(empty.heading, '0건');
 });
 
 test('429는 잠시 뒤 재시도해 정상 집계, 404는 재시도하지 않음', async () => {

@@ -319,6 +319,48 @@
     </div>`;
   }
 
+  /** 신차가 100% 안에서 잔존 가치 / 향후 1년 감가 / 이미 감가된 금액을 나눠 표시한다. */
+  function createDepreciationBar(originPrice, price, yearLoss = null) {
+    if (!Number.isFinite(originPrice) || originPrice <= 0) {
+      return '<div class="encar-tooltip-detail">신차가 정보 없음 · 비율 표시 불가</div>';
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      return '<div class="encar-tooltip-detail">현재가 정보 없음 · 비율 표시 불가</div>';
+    }
+    const hasForecast = Number.isFinite(yearLoss) && yearLoss >= 0;
+    const loss = hasForecast ? Math.min(price, yearLoss) : 0;
+    const currentValue = Math.min(originPrice, price);
+    const remainingValue = Math.min(originPrice, price - loss);
+    const segments = [
+      { key: 'retained', label: hasForecast ? '1년 후 잔존' : '현재 가치', amount: remainingValue },
+      ...(hasForecast ? [{ key: 'forecast', label: '1년 예상 감가', amount: currentValue - remainingValue }] : []),
+      { key: 'past', label: '누적 감가', amount: originPrice - currentValue }
+    ].map(segment => ({ ...segment, percent: segment.amount / originPrice * 100 }));
+    const formatPercent = value => `${value.toFixed(1).replace(/\.0$/, '')}%`;
+    const formatPrice = value => `${Math.round(value).toLocaleString()}만원`;
+    const overOrigin = price > originPrice;
+    const summary = [
+      `신차가 ${formatPrice(originPrice)} = 100%`,
+      `현재가 ${formatPrice(price)} (${formatPercent(price / originPrice * 100)})`,
+      ...(hasForecast ? [
+        `1년 후 예상가 ${formatPrice(price - loss)}`,
+        `1년 예상 감가 ${formatPrice(loss)} (신차가 대비 ${formatPercent(loss / originPrice * 100)})`,
+        '초록 + 주황 = 현재 가치 · 주황 = 향후 1년 예상 감가 · 회색 = 이미 감가된 부분'
+      ] : ['초록 = 현재 가치 · 회색 = 이미 감가된 부분 · 향후 감가는 아직 반영하지 않음']),
+      ...(overOrigin ? ['현재가가 신차가보다 높아 막대와 범례 비율은 100% 범위 안의 부분만 표시합니다.'] : [])
+    ].join('\n');
+
+    return `<div class="encar-depreciation-meter" title="${summary}">
+      <div class="encar-depreciation-bar" role="img" aria-label="${summary}">
+        ${segments.map(segment => `<span class="encar-depreciation-segment encar-depreciation-segment--${segment.key}" data-depreciation-part="${segment.key}" style="width:${segment.percent}%" aria-hidden="true"></span>`).join('')}
+      </div>
+      <div class="encar-depreciation-legend">
+        ${segments.map(segment => `<span><i class="encar-depreciation-swatch encar-depreciation-segment--${segment.key}" aria-hidden="true"></i>${segment.label} ${formatPercent(segment.percent)}</span>`).join('')}
+      </div>
+      ${overOrigin ? '<div class="encar-tooltip-detail">현재가가 신차가 초과 · 막대는 100% 범위만 표시</div>' : ''}
+    </div>`;
+  }
+
   /**
    * depreciationCurve(선택): 모델 그룹 회귀로 추정한 감가곡선
    *   priceAt(경과연수) → 곡선 가격, ageShift: 정수 경과연수 → 코호트 평균 경과연수 보정,
@@ -591,6 +633,13 @@
     ];
     const inspectionSheetText = !hasInspection ? '성능점검표 없음'
       : sheetParts.length > 0 ? `성능점검표: ${sheetParts.join(' · ')}` : '성능점검표: 이상 없음';
+    // 글자 크기는 그대로 두고 수리·부식 내역만 항목별 타원형 배지로 강조한다.
+    const inspectionSheetHtml = hasInspection && sheetParts.length > 0
+      ? `<div class="encar-tooltip-detail encar-inspection-repairs">
+          <span>성능점검표:</span>
+          ${sheetParts.map(part => `<span class="encar-inspection-repair">${escapeHtml(part)}</span>`).join('')}
+        </div>`
+      : `<div class="encar-tooltip-detail">${inspectionSheetText}</div>`;
     const diagnosisFindings = [
       ...(fullData.diagFrameReplacement ? ['프레임 교환'] : []),
       ...(fullData.diagPanelReplacement ? ['외판 교환'] : [])
@@ -925,7 +974,7 @@
       ? `연평균 ${Math.round(mileage / ageMonths * 12).toLocaleString()}km`
       : '';
 
-    // 감가 현황: 누적 감가는 바로 표시하고, 감가 속도는 모델 그룹 감가곡선을 불러온 뒤 채운다.
+    // 감가 현황: 현재 가치·누적 감가는 바로 그리고, 추정 후 현재 가치 안에 1년 감가를 나눈다.
     const carAgeYears = year > 0
       ? Math.max(0, (nowYear - (2000 + year)) + (nowMonth - (registMonth > 0 ? registMonth : 6.5)) / 12)
       : null;
@@ -997,16 +1046,23 @@
           <span>📉 감가 현황</span>
           <span class="encar-depreciation-level" data-encar-depreciation-level></span>
         </div>
+        <div data-encar-depreciation-bar>${createDepreciationBar(originPrice, price)}</div>
         <div class="encar-depreciation-forecast encar-loading" data-encar-depreciation-forecast>감가곡선 계산 중…</div>
-        <div class="encar-tooltip-detail">출고 ${carAgeYears.toFixed(1)}년 · ${depreciationTotalText}</div>
       </section>` : ''}
-      ${canAnalyzeSoldOut ? '<section class="encar-trade-activity"><div class="encar-tooltip-row"><span>📊 거래 현황</span><span>최근 30일 · 전체 연식</span></div><div class="encar-loading" data-encar-activity-main>거래 현황 조회 중…</div><div data-encar-activity-note></div><div data-encar-activity-scope></div></section>' : ''}
+      ${canAnalyzeSoldOut ? `<section class="encar-trade-activity">
+        <div class="encar-tooltip-row encar-trade-heading">
+          <span>📊 거래 현황 (최근 30일 기준)</span>
+          <span data-encar-activity-total>—</span>
+        </div>
+        <div class="encar-loading" data-encar-activity-main>거래 현황 조회 중…</div>
+        <div data-encar-activity-note></div>
+      </section>` : ''}
       <div class="encar-tooltip-row">
         <span>🔧 성능점검</span>
         <span>${Math.round(scoreResult.breakdown.inspection)}/${w.inspection}</span>
       </div>
       ${isInspectionPrivate ? `<div class="encar-tooltip-detail">조회불가 · 비공개</div>` : `
-        <div class="encar-tooltip-detail">${inspectionSheetText}</div>
+        ${inspectionSheetHtml}
         ${hasDiagnosis ? `<div class="encar-tooltip-detail">${diagnosisText}</div>`
           : `<div class="encar-tooltip-detail" style="color:#ffcc00">엔카진단 미적용 (-5점)</div>`}`}
       <div class="encar-tooltip-row">
@@ -1279,13 +1335,16 @@
       depreciationLoadStarted = true;
       const levelEl = tooltip.querySelector('[data-encar-depreciation-level]');
       const forecastEl = tooltip.querySelector('[data-encar-depreciation-forecast]');
+      const barEl = tooltip.querySelector('[data-encar-depreciation-bar]');
       if (!levelEl || !forecastEl) return;
-      // 추정할 수 없으면 예상가 자리에 사유를 표시한다.
+      // 예측이 없어도 확인된 현재 가치·누적 감가 막대는 남겨 둔다.
       const showUnavailable = (label, detail) => {
         levelEl.textContent = label;
         levelEl.className = 'encar-depreciation-level encar-depreciation-level--none';
         forecastEl.className = 'encar-depreciation-forecast';
         forecastEl.textContent = detail;
+        forecastEl.title = '';
+        if (barEl) barEl.innerHTML = createDepreciationBar(originPrice, price);
       };
       if (!fullData.modelGroupName) {
         showUnavailable('추정 불가', '모델 정보 없음');
@@ -1295,6 +1354,8 @@
       levelEl.textContent = '';
       forecastEl.className = 'encar-depreciation-forecast encar-loading';
       forecastEl.textContent = '감가곡선 계산 중…';
+      forecastEl.title = '';
+      if (barEl) barEl.innerHTML = createDepreciationBar(originPrice, price);
       const percent = value => `${(value * 100).toFixed(1)}%`;
 
       try {
@@ -1306,8 +1367,11 @@
         const result = EncarDepreciation.estimate(curve, { age: carAgeYears, price, originPrice });
         // 1년 후 예상가 = 현재가 - 예상 하락액. 표시값끼리 더하면 현재가가 되도록 하락액을 먼저 반올림한다.
         const yearLoss = Math.round(result.yearLoss);
+        const forecastText = `1년 후 예상가 ${(price - yearLoss).toLocaleString()}만원 (-${yearLoss.toLocaleString()}만원${result.originRate !== null ? `, 신차가 대비 ${percent(result.originRate)}` : ''})`;
         forecastEl.className = 'encar-depreciation-forecast';
-        forecastEl.textContent = `1년 후 예상가 ${(price - yearLoss).toLocaleString()}만원 (-${yearLoss.toLocaleString()}만원${result.originRate !== null ? `, 신차가 대비 ${percent(result.originRate)}` : ''})`;
+        if (barEl) barEl.innerHTML = createDepreciationBar(originPrice, price, yearLoss);
+        // 막대 아래에 예상 감가액과 예상가를 표시하고, 비율·회귀 근거는 마우스오버에 둔다.
+        forecastEl.textContent = `1년 예상 감가 ${yearLoss.toLocaleString()}만원 · 1년 후 예상가 ${(price - yearLoss).toLocaleString()}만원`;
         if (result.level) {
           levelEl.textContent = result.level.label;
           levelEl.className = `encar-depreciation-level encar-depreciation-level--${result.level.key}`;
@@ -1333,7 +1397,7 @@
           ...(result.extrapolated ? ['표본 연식 범위 밖 추정'] : [])
         ].join(' · ');
         forecastEl.textContent += ' ⓘ';
-        forecastEl.title = `${rateText}\n${basisText}\n\n` + '1년 후 예상가 = 현재가 - 1년간 예상 하락액. 신차가 대비 = 하락액 ÷ 신차가(옵션 포함), 현재가 대비 = 연식 감가(경과연수에 따른 하락) + 주행 감가(모델 평균만큼 1년 더 주행할 때의 하락).' +
+        forecastEl.title = `${forecastText}\n출고 ${carAgeYears.toFixed(1)}년 · ${depreciationTotalText}\n${rateText}\n${basisText}\n\n` + '1년 후 예상가 = 현재가 - 1년간 예상 하락액. 신차가 대비 = 하락액 ÷ 신차가(옵션 포함), 현재가 대비 = 연식 감가(경과연수에 따른 하락) + 주행 감가(모델 평균만큼 1년 더 주행할 때의 하락).' +
           ' 단계(신차가 대비): 6.5% 이상 가파른 감가 · 4~6.5% 평균적 감가 · 2.5~4% 완만한 감가 · 2.5% 미만 감가 둔화.' +
           ' 같은 모델 그룹(여러 세대·트림)의 최근 매물을 회귀해 추정했으며, 지금까지의 주행 이력은 현재 가격에 이미 반영돼 있습니다.' +
           (range ? ' 괄호 안은 표본이 500대 미만이라 매물을 다시 뽑아 50번 추정한 90% 범위입니다.' : '') +
@@ -1357,7 +1421,7 @@
 
         clipboardExtras.depreciation = [
           `감가: ${depreciationTotalText}`,
-          `현재 감가: ${levelEl.textContent} · ${forecastEl.textContent.replace(/ ⓘ$/, '')} · ${rateText}`,
+          `현재 감가: ${levelEl.textContent} · ${forecastText} · ${rateText}`,
           `감가 추정 근거: ${basisText} (매물 가격 기준 추정)`
         ].join('\n');
         refreshClipboardText();
@@ -1378,11 +1442,12 @@
       activityLoading = true;
       const main = tooltip.querySelector('[data-encar-activity-main]');
       const note = tooltip.querySelector('[data-encar-activity-note]');
-      const scope = tooltip.querySelector('[data-encar-activity-scope]');
+      const totalEl = tooltip.querySelector('[data-encar-activity-total]');
       main.className = 'encar-loading';
       main.textContent = '거래 현황 조회 중…';
       note.textContent = '';
-      scope.textContent = '';
+      totalEl.textContent = '—';
+      totalEl.title = '';
       clipboardExtras.activity = '거래 현황: 조회 중';
       refreshClipboardText();
       try {
@@ -1412,8 +1477,8 @@
         note.innerHTML = `<div class="encar-trade-legend"><span class="encar-trade-active">${activeText}${complete && total > 0 ? ` · ${activePercent.toFixed(1)}%` : ''}</span><span class="encar-trade-sold">${soldText}${complete && total > 0 ? ` · ${soldPercent.toFixed(1)}%` : ''}</span></div>`;
         const totalText = `매물 합계 ${total.toLocaleString()}건${complete ? '' : ' 이상 · 집계 일부'}`;
         const totalHelp = '동일 모델 세대·세부 트림의 모든 연식을 합산합니다. 매물 합계는 현재 판매 중 + 최근 30일 판매완료 기록이며 신규 등록 대수가 아닙니다. 재등록·중복 기록으로 고유 차량 수와 다를 수 있습니다.';
-        scope.textContent = totalText;
-        scope.title = totalHelp;
+        totalEl.textContent = `${total.toLocaleString()}건${complete ? '' : ' 이상 · 집계 일부'}`;
+        totalEl.title = totalHelp;
         clipboardExtras.activity = ['거래 현황: ' + activeText, soldText,
           totalText, `${d.scope} · ${d.start}~${d.end}`, `주의: ${totalHelp}`].join('\n');
         refreshClipboardText();
